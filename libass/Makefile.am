@@ -13,8 +13,10 @@ yasm_verbose_0 = @echo "  YASM    " $@;
 .asm.lo:
 	$(yasm_verbose)$(LIBTOOL) $(AM_V_lt) --mode=compile $(AS) $(ASFLAGS) -o $@ $< -prefer-non-pic
 
-SRC_INTEL = x86/blend_bitmaps.asm x86/cpuid.asm x86/blend_bitmaps.h x86/cpuid.h
-SRC_INTEL64 = x86/be_blur.asm x86/be_blur.h
+SRC_INTEL = x86/blend_bitmaps.asm x86/blend_bitmaps.h\
+			x86/cpuid.asm x86/cpuid.h
+SRC_INTEL64 = x86/be_blur.asm x86/be_blur.h\
+			  x86/iir_gaussian.asm x86/iir_gaussian.h
 
 lib_LTLIBRARIES = libass.la
 libass_la_SOURCES = ass.c ass_cache.c ass_font.c ass_fontconfig.c ass_render.c \

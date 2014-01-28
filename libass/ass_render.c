@@ -37,6 +37,7 @@
 
 #include "x86/blend_bitmaps.h"
 #include "x86/be_blur.h"
+#include "x86/iir_gaussian.h"
 
 #endif // ASM
 
@@ -195,6 +196,28 @@ static ASS_Image *my_draw_bitmap(unsigned char *bitmap, int bitmap_w,
     }
 
     return img;
+}
+
+static void cal_gaussian_coeff(float sigma,  float *a0, float *a1, float *a2,
+                               float *a3, float *b1, float *b2, float *cprev,
+                               float *cnext)
+{
+    float alpha, lamma,  k;
+    // defensive check
+    if (sigma < 0.5f)
+        sigma = 0.5f;
+
+    alpha = (float)exp((0.726)*(0.726)) / sigma;
+    lamma = (float)exp(-alpha);
+    *b2 = (float)exp(-2*alpha);
+    k = (1-lamma)*(1-lamma)/(1+2*alpha*lamma- (*b2));
+    *a0 = k;
+    *a1 = k*(alpha-1)*lamma;
+    *a2 = k*(alpha+1)*lamma;
+    *a3 = -k* (*b2);
+    *b1 = -2*lamma;
+    *cprev = (*a0 + *a1)/(1+ *b1 + *b2);
+    *cnext = (*a2 + *a3)/(1+ *b1 + *b2);
 }
 
 /**
@@ -1737,6 +1760,7 @@ static void apply_blur(CombinedBitmapInfo *info, ASS_Renderer *render_priv)
 
     // Apply gaussian blur
     if (blur_radius > 0.0) {
+        /*
         generate_tables(priv_blur, blur_radius);
         if (bm_o)
             ass_gauss_blur(bm_o->buffer, priv_blur->tmp,
@@ -1748,6 +1772,30 @@ static void apply_blur(CombinedBitmapInfo *info, ASS_Renderer *render_priv)
                            bm_g->w, bm_g->h, bm_g->stride,
                            priv_blur->gt2, priv_blur->g_r,
                            priv_blur->g_w);
+        */
+        float a0 = 0, a1 = 0, a2 = 0, a3 = 0, b1 = 0, b2 = 0, cprev = 0, cnext = 0;
+        cal_gaussian_coeff(info->blur * render_priv->blur_scale, &a0, &a1, &a2, &a3, &b1, &b2, &cprev, &cnext);
+        if(bm_o){
+            float* oTempm = (float*) malloc(FFMAX(info->bm_o->w, info->bm_o->h)*sizeof(float) + 64);
+            float* oTemp = (float *)(((long long) oTempm + 64) & ~(63));
+            size_t tmp_stride = info->bm_o->stride + 32;
+            float* intermediatem = (float*) malloc( (tmp_stride * info->bm_o->h * sizeof(float)) + (info->bm_o->h*64));
+            float* intermediate = (float *)(((long long) intermediatem + 64) & ~(63));
+            size_t width = info->bm_o->w & ~8;
+            size_t height = info->bm_o->h & ~8;
+            for(int i = 0; i < height; i+=16){
+                ass_gaussian_horizontal_avx(oTemp, &info->bm_o->buffer[i * info->bm_o->stride], &intermediate[i], info->bm_o->w,
+                                     info->bm_o->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
+                                     &cprev, &cnext );
+            }
+            for(int i = 0; i < width; i+=16){
+                ass_gaussian_vertical_avx(oTemp, &intermediate[i], &info->bm_o->buffer[i*height], info->bm_o->w,
+                                   info->bm_o->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
+                                   &cprev, &cnext );
+            }
+            free(oTempm);
+            free(intermediatem);
+        }
     }
 }
 
