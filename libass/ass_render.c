@@ -1781,15 +1781,13 @@ static void apply_blur(CombinedBitmapInfo *info, ASS_Renderer *render_priv)
             size_t tmp_stride = info->bm_o->stride + 32;
             float* intermediatem = (float*) malloc( (tmp_stride * info->bm_o->h * sizeof(float)) + (info->bm_o->h*64));
             float* intermediate = (float *)(((long long) intermediatem + 64) & ~(63));
-            size_t width = info->bm_o->w & ~8;
-            size_t height = info->bm_o->h & ~8;
-            for(int i = 0; i < height; i+=16){
+            for(int i = 0; i < info->bm_o->h; i+=16){
                 ass_gaussian_horizontal_avx(oTemp, &info->bm_o->buffer[i * info->bm_o->stride], &intermediate[i], info->bm_o->w,
                                      info->bm_o->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
                                      &cprev, &cnext );
             }
-            for(int i = 0; i < width; i+=16){
-                ass_gaussian_vertical_avx(oTemp, &intermediate[i], &info->bm_o->buffer[i*height], info->bm_o->w,
+            for(int i = 0; i < info->bm_o->w; i+=16){
+                ass_gaussian_vertical_avx(oTemp, &intermediate[i], &info->bm_o->buffer[i*info->bm_o->h], info->bm_o->w,
                                    info->bm_o->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
                                    &cprev, &cnext );
             }
@@ -2469,12 +2467,16 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
             info->cached = 1;
             free(info->str);
         }else{
-            if(info->chars != 1 && !info->is_drawing){
+//            if(info->chars != 1 && !info->is_drawing){
+                info->w = (info->w + 31) & ~31;
+                info->h = (info->h + 31) & ~31;
                 info->bm = alloc_bitmap(info->w, info->h);
                 if(info->has_outline){
+                    info->o_w = (info->o_w + 31) & ~31;
+                    info->o_h = (info->o_h + 31) & ~31;
                     info->bm_o = alloc_bitmap(info->o_w, info->o_h);
                 }
-            }
+//            }
         }
     }
 
@@ -2484,7 +2486,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
         while (info) {
             current_info = &combined_info[info->bm_run_id];
             if(!current_info->cached && !is_skip_symbol(info->symbol)){
-                if(current_info->chars == 1 || current_info->is_drawing){
+/*                if(current_info->chars == 1 || current_info->is_drawing){
                     int offset_x = (info->pos.x >> 6) - current_info->pos.x;
                     int offset_y = (info->pos.y >> 6) - current_info->pos.y;
                     if(info->bm){
@@ -2497,7 +2499,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
                         current_info->bm_o->left += offset_x;
                         current_info->bm_o->top += offset_y;
                     }
-                }else{
+                }else{ */
                     unsigned offset_x, offset_y;
                     if(info->bm && info->bm->w && info->bm->h){
                         offset_x = (info->pos.x >> 6) - current_info->pos.x + info->bm->left;
@@ -2523,7 +2525,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
                             info->bm_o->w
                         );
                     }
-                }
+//                }
             }
             info = info->next;
         }

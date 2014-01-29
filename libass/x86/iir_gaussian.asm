@@ -245,8 +245,8 @@ SECTION .text
     %endif
     lea r0, [r0 + -mmsize * 2]
     sub r2, r4
-    cmp r14, 0
-    jge .rtl_loop
+    cmp r14, r4
+    jl .rtl_loop
     RET
 %endmacro
 
