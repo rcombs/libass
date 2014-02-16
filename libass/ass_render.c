@@ -1775,21 +1775,22 @@ static void apply_blur(CombinedBitmapInfo *info, ASS_Renderer *render_priv)
         */
         float a0 = 0, a1 = 0, a2 = 0, a3 = 0, b1 = 0, b2 = 0, cprev = 0, cnext = 0;
         cal_gaussian_coeff(info->blur * render_priv->blur_scale, &a0, &a1, &a2, &a3, &b1, &b2, &cprev, &cnext);
-        if(bm_o){
-            float* oTempm = (float*) malloc(FFMAX(info->bm_o->w, info->bm_o->h)*sizeof(float) + 64);
+        Bitmap *blur_bitmap = bm_o ? bm_o : bm_g;
+        if(blur_bitmap){
+            float* oTempm = (float*) malloc(FFMAX(blur_bitmap->w, blur_bitmap->h)*sizeof(float) + 64);
             float* oTemp = (float *)(((long long) oTempm + 64) & ~(63));
-            size_t tmp_stride = info->bm_o->stride + 32;
-            float* intermediatem = (float*) malloc( (tmp_stride * info->bm_o->h * sizeof(float)) + (info->bm_o->h*64));
+            size_t tmp_stride = blur_bitmap->stride + 32;
+            float* intermediatem = (float*) malloc( (tmp_stride * blur_bitmap->h * sizeof(float)) + (blur_bitmap->h*64));
             float* intermediate = (float *)(((long long) intermediatem + 64) & ~(63));
-            for(int i = 0; i < info->bm_o->h; i+=16){
-                ass_gaussian_horizontal_avx(oTemp, &info->bm_o->buffer[i * info->bm_o->stride], &intermediate[i], info->bm_o->w,
-                                     info->bm_o->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
-                                     &cprev, &cnext );
+            for(int i = 0; i < blur_bitmap->h; i+=16){
+                ass_gaussian_horizontal_avx(oTemp, &blur_bitmap->buffer[i * blur_bitmap->stride], &intermediate[i], blur_bitmap->w,
+                                     blur_bitmap->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
+                                     &cprev, &cnext);
             }
-            for(int i = 0; i < info->bm_o->w; i+=16){
-                ass_gaussian_vertical_avx(oTemp, &intermediate[i], &info->bm_o->buffer[i*info->bm_o->h], info->bm_o->w,
-                                   info->bm_o->h, tmp_stride, &a0, &a1, &a2, &a3, &b1, &b2,
-                                   &cprev, &cnext );
+            for(int i = 0; i < blur_bitmap->w; i+=16){
+                ass_gaussian_vertical_avx(oTemp, &intermediate[i], &blur_bitmap->buffer[i*blur_bitmap->stride], tmp_stride,
+                                   blur_bitmap->h, blur_bitmap->stride, &a0, &a1, &a2, &a3, &b1, &b2,
+                                   &cprev, &cnext);
             }
             free(oTempm);
             free(intermediatem);

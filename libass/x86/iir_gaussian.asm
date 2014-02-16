@@ -243,7 +243,7 @@ SECTION .text
         %endif
         sub r1, 4
     %endif
-    lea r0, [r0 + -mmsize * 2]
+    sub r0, mmsize * 2
     sub r2, r4
     cmp r14, r4
     jl .rtl_loop
