@@ -99,9 +99,9 @@ SECTION .text
 
 %macro blur_pass 1
 %if %1 == horizontal
-    cglobal gaussian_horizontal, 15, 15
+    cglobal gaussian_horizontal, 15, 15, 16
 %else
-    cglobal gaussian_vertical, 15, 15
+    cglobal gaussian_vertical, 15, 15, 16
 %endif
     clear_mm m14, m15, m10, m11, m12, m13; skip edge calculations
     xor r14, r14 ; x
