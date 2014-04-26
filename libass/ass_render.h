@@ -353,7 +353,9 @@ struct ass_renderer {
     TextInfo text_info;
     CacheStore cache;
 
+#if CONFIG_RASTERIZER
     ASS_Rasterizer rasterizer;
+#endif
     BitmapBlendFunc add_bitmaps_func;
     BitmapBlendFunc sub_bitmaps_func;
     BitmapMulFunc mul_bitmaps_func;
