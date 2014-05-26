@@ -41,8 +41,24 @@
 
 #endif // ASM
 
-static void init_thread(ASS_Renderer *priv, unsigned i)
+static int init_thread(ASS_Renderer *priv, unsigned i)
 {
+    FT_Library ft;
+    FT_Error error = FT_Init_FreeType(&ft);
+    if (error) {
+        ass_msg(priv->library, MSGL_FATAL, "%s failed", "FT_Init_FreeType");
+        return 1;
+    }
+
+    if (i == 0) {
+        int vmajor, vminor, vpatch;
+        FT_Library_Version(ft, &vmajor, &vminor, &vpatch);
+        ass_msg(priv->library, MSGL_V, "Raster: FreeType %d.%d.%d",
+                vmajor, vminor, vpatch);
+    }
+
+    priv->ftlibraries[i] = ft;
+
     priv->text_infos[i].max_bitmaps = MAX_BITMAPS_INITIAL;
     priv->text_infos[i].max_glyphs = MAX_GLYPHS_INITIAL;
     priv->text_infos[i].max_lines = MAX_LINES_INITIAL;
@@ -88,39 +104,33 @@ static void init_thread(ASS_Renderer *priv, unsigned i)
     priv->rasterizers[i].outline_error = 16;
     rasterizer_init(&priv->rasterizers[i]);
 #endif
+
+    priv->caches[i].font_cache = ass_font_cache_create();
+    priv->caches[i].bitmap_cache = ass_bitmap_cache_create();
+    priv->caches[i].composite_cache = ass_composite_cache_create();
+    priv->caches[i].outline_cache = ass_outline_cache_create();
+    priv->caches[i].glyph_max = GLYPH_CACHE_MAX;
+    priv->caches[i].bitmap_max_size = BITMAP_CACHE_MAX_SIZE;
+    priv->caches[i].composite_max_size = COMPOSITE_CACHE_MAX_SIZE;
+
+    return 0;
 }
 
 static void *event_thread(void *priv);
 
 ASS_Renderer *ass_renderer_init(ASS_Library *library)
 {
-    int error;
-    FT_Library ft;
-    ASS_Renderer *priv = 0;
-    int vmajor, vminor, vpatch;
-
-    error = FT_Init_FreeType(&ft);
-    if (error) {
-        ass_msg(library, MSGL_FATAL, "%s failed", "FT_Init_FreeType");
-        goto ass_init_exit;
-    }
-
-    FT_Library_Version(ft, &vmajor, &vminor, &vpatch);
-    ass_msg(library, MSGL_V, "Raster: FreeType %d.%d.%d",
-           vmajor, vminor, vpatch);
+    ASS_Renderer *priv = NULL;
 
     priv = calloc(1, sizeof(ASS_Renderer));
-    if (!priv) {
-        FT_Done_FreeType(ft);
+    
+    if (!priv)
         goto ass_init_exit;
-    }
 
     priv->library = library;
-    priv->ftlibrary = ft;
 
 #ifdef CONFIG_PTHREAD
     pthread_mutex_init(&priv->cur_event_mutex, &library->pthread_mutexattr);
-    pthread_mutex_init(&priv->ft_mutex, &library->pthread_mutexattr);
     pthread_cond_init(&priv->start_frame, &library->pthread_condattr);
     pthread_cond_init(&priv->finished_frame, &library->pthread_condattr);
     int threads = priv->nb_threads = 8;//FIXME: Use the number of CPUs here.
@@ -132,11 +142,15 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
         pthread_mutex_lock(&priv->threads[i].run_mutex);
         if (pthread_create(&priv->threads[i].thread, &library->pthread_attr,
                            &event_thread, &priv->threads[i])) {
-            FT_Done_FreeType(ft);
+            free(priv);
             priv = NULL;
             goto ass_init_exit;
         }
-        init_thread(priv, i);
+        if (init_thread(priv, i)) {
+            free(priv);
+            priv = NULL;
+            goto ass_init_exit;
+        }
     }
     priv->shapers = ass_shaper_new(0, threads, priv);
     priv->synth_privs = ass_synth_init(BLUR_MAX_RADIUS, threads);
@@ -167,14 +181,6 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
         priv->be_blur_func = be_blur_c;
     #endif
     priv->restride_bitmap_func = restride_bitmap_c;
-
-    priv->cache.font_cache = ass_font_cache_create();
-    priv->cache.bitmap_cache = ass_bitmap_cache_create();
-    priv->cache.composite_cache = ass_composite_cache_create();
-    priv->cache.outline_cache = ass_outline_cache_create();
-    priv->cache.glyph_max = GLYPH_CACHE_MAX;
-    priv->cache.bitmap_max_size = BITMAP_CACHE_MAX_SIZE;
-    priv->cache.composite_max_size = COMPOSITE_CACHE_MAX_SIZE;
 
     priv->settings.font_size_coeff = 1.;
 
@@ -210,10 +216,6 @@ static void free_list_clear(ASS_Renderer *render_priv)
 
 void ass_renderer_done(ASS_Renderer *render_priv)
 {
-    ass_cache_done(render_priv->cache.font_cache);
-    ass_cache_done(render_priv->cache.bitmap_cache);
-    ass_cache_done(render_priv->cache.composite_cache);
-    ass_cache_done(render_priv->cache.outline_cache);
 
     ass_free_images(render_priv->images_root);
     ass_free_images(render_priv->prev_images_root);
@@ -221,7 +223,6 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     int i;
 #ifdef CONFIG_PTHREAD
     pthread_mutex_destroy(&render_priv->cur_event_mutex);
-    pthread_mutex_destroy(&render_priv->ft_mutex);
     pthread_cond_destroy(&render_priv->start_frame);
     pthread_cond_destroy(&render_priv->finished_frame);
     int threads = render_priv->nb_threads;
@@ -230,8 +231,15 @@ void ass_renderer_done(ASS_Renderer *render_priv)
 #endif
 
     for (i = 0; i < threads; i++) {
+        ass_cache_done(render_priv->caches[i].font_cache);
+        ass_cache_done(render_priv->caches[i].bitmap_cache);
+        ass_cache_done(render_priv->caches[i].composite_cache);
+        ass_cache_done(render_priv->caches[i].outline_cache);
+#ifdef CONFIG_PTHREAD
         pthread_mutex_unlock(&render_priv->threads[i].run_mutex);
         pthread_join(render_priv->threads[i].thread, NULL);
+        pthread_mutex_destroy(&render_priv->threads[i].run_mutex);
+#endif
 #if CONFIG_RASTERIZER
         rasterizer_done(&render_priv->rasterizers[i]);
 #endif
@@ -245,11 +253,11 @@ void ass_renderer_done(ASS_Renderer *render_priv)
         free(render_priv->text_infos[i].glyphs);
         free(render_priv->text_infos[i].lines);
         free(render_priv->text_infos[i].combined_bitmaps);
+        if (render_priv->ftlibraries[i])
+            FT_Done_FreeType(render_priv->ftlibraries[i]);
     }
     free(render_priv->synth_privs);
     free(render_priv->shapers);
-    if (render_priv->ftlibrary)
-        FT_Done_FreeType(render_priv->ftlibrary);
     if (render_priv->fontconfig_priv)
         fontconfig_done(render_priv->fontconfig_priv);
     free(render_priv->eimg);
@@ -561,8 +569,9 @@ static void free_list_add(ASS_Renderer *render_priv, void *object)
  * applicable. The blended bitmaps are added to a free list which is freed
  * at the start of a new frame.
  */
-static void blend_vector_clip(ASS_Renderer *render_priv,
-                              ASS_Image *head, RenderContext *state, void *rast)
+static void blend_vector_clip(ASS_Renderer *render_priv, ASS_Image *head,
+                              RenderContext *state, void *rast,
+                              CacheStore *cache)
 {
     FT_Outline *outline;
     Bitmap *clip_bm = NULL;
@@ -578,7 +587,7 @@ static void blend_vector_clip(ASS_Renderer *render_priv,
     memset(&key, 0, sizeof(key));
     key.type = BITMAP_CLIP;
     key.u.clip.text = drawing->text;
-    val = ass_cache_get(render_priv->cache.bitmap_cache, &key);
+    val = ass_cache_get(cache->bitmap_cache, &key);
 
     if (val) {
         clip_bm = val->bm;
@@ -609,7 +618,7 @@ static void blend_vector_clip(ASS_Renderer *render_priv,
         memset(&v, 0, sizeof(v));
         key.u.clip.text = strdup(drawing->text);
         v.bm = clip_bm;
-        ass_cache_put(render_priv->cache.bitmap_cache, &key, &v);
+        ass_cache_put(cache->bitmap_cache, &key, &v);
     }
 
     if (!clip_bm) return;
@@ -706,7 +715,7 @@ static inline int is_skip_symbol(uint32_t x)
  */
 static ASS_Image *render_text(ASS_Renderer *render_priv, int dst_x, int dst_y,
                               RenderContext *state, TextInfo *text_info,
-                              void *rast)
+                              void *rast, CacheStore *cache)
 {
     int pen_x, pen_y;
     int i;
@@ -784,7 +793,7 @@ static ASS_Image *render_text(ASS_Renderer *render_priv, int dst_x, int dst_y,
     }
 
     *tail = 0;
-    blend_vector_clip(render_priv, head, state, rast);
+    blend_vector_clip(render_priv, head, state, rast, cache);
 
     for (ASS_Image* cur = head; cur; cur = cur->next) {
         unsigned w = cur->w,
@@ -885,11 +894,14 @@ void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style,
  */
 static void
 init_render_context(ASS_Renderer *render_priv, ASS_Event *event,
-                    RenderContext *state)
+                    RenderContext *state, CacheStore *cache,
+                    FT_Library ftlibrary)
 {
     state->event = event;
     state->style = render_priv->track->styles + event->Style;
     state->parsed_tags = 0;
+    state->cache = cache;
+    state->ftlibrary = ftlibrary;
 
     reset_render_context(render_priv, state->style, state);
     state->wrap_style = render_priv->track->WrapStyle;
@@ -915,8 +927,7 @@ init_render_context(ASS_Renderer *render_priv, ASS_Event *event,
     state->effect_skip_timing = 0;
     state->bm_run_id = 0;
     ass_drawing_free(state->drawing);
-    state->drawing = ass_drawing_new(render_priv->library,
-            render_priv->ftlibrary);
+    state->drawing = ass_drawing_new(render_priv->library, ftlibrary);
 
     apply_transition_effects(render_priv, event, state);
 }
@@ -938,7 +949,8 @@ static void free_render_context(RenderContext *state)
  */
 static void draw_opaque_box(ASS_Renderer *render_priv, GlyphInfo *info,
                             int asc, int desc, FT_Outline *ol,
-                            FT_Vector advance, int sx, int sy)
+                            FT_Vector advance, int sx, int sy,
+                            FT_Library ftlibrary)
 {
     int i;
     int adv = advance.x;
@@ -965,7 +977,7 @@ static void draw_opaque_box(ASS_Renderer *render_priv, GlyphInfo *info,
         { .x = -sx,         .y = -desc - sy },
     };
 
-    FT_Outline_New(render_priv->ftlibrary, 4, 1, ol);
+    FT_Outline_New(ftlibrary, 4, 1, ol);
 
     ol->n_points = ol->n_contours = 0;
     for (i = 0; i < 4; i++) {
@@ -980,7 +992,8 @@ static void draw_opaque_box(ASS_Renderer *render_priv, GlyphInfo *info,
  * around limitations of the FreeType stroker.
  */
 static void stroke_outline(ASS_Renderer *render_priv, FT_Outline *outline,
-                           int sx, int sy, RenderContext *state)
+                           int sx, int sy, RenderContext *state,
+                           FT_Library ftlibrary)
 {
     if (sx <= 0 && sy <= 0)
         return;
@@ -1004,8 +1017,8 @@ static void stroke_outline(ASS_Renderer *render_priv, FT_Outline *outline,
             ass_msg(render_priv->library, MSGL_WARN,
                     "FT_Stroker_GetBorderCounts failed, error: %d", error);
         }
-        FT_Outline_Done(render_priv->ftlibrary, outline);
-        FT_Outline_New(render_priv->ftlibrary, n_points, n_contours, outline);
+        FT_Outline_Done(ftlibrary, outline);
+        FT_Outline_New(ftlibrary, n_points, n_contours, outline);
         outline->n_points = outline->n_contours = 0;
         FT_Stroker_ExportBorder(state->stroker, border, outline);
 
@@ -1015,7 +1028,7 @@ static void stroke_outline(ASS_Renderer *render_priv, FT_Outline *outline,
         int i;
         FT_Outline nol;
 
-        FT_Outline_New(render_priv->ftlibrary, outline->n_points,
+        FT_Outline_New(ftlibrary, outline->n_points,
                        outline->n_contours, &nol);
         FT_Outline_Copy(outline, &nol);
 
@@ -1027,7 +1040,7 @@ static void stroke_outline(ASS_Renderer *render_priv, FT_Outline *outline,
         for (i = 0; i < outline->n_points; i++)
             outline->points[i].y = nol.points[i].y;
 
-        FT_Outline_Done(render_priv->ftlibrary, &nol);
+        FT_Outline_Done(ftlibrary, &nol);
     }
 }
 
@@ -1120,7 +1133,8 @@ static void fill_composite_hash(CompositeHashKey *hk, CombinedBitmapInfo *info)
  * The glyphs are returned in info->glyph and info->outline_glyph
  */
 static void
-get_outline_glyph(ASS_Renderer *priv, GlyphInfo *info, RenderContext *state)
+get_outline_glyph(ASS_Renderer *priv, GlyphInfo *info, RenderContext *state,
+                  FT_Library ftlibrary, CacheStore *cache)
 {
     OutlineHashValue *val;
     OutlineHashKey key;
@@ -1128,7 +1142,7 @@ get_outline_glyph(ASS_Renderer *priv, GlyphInfo *info, RenderContext *state)
     memset(&info->hash_key, 0, sizeof(key));
 
     fill_glyph_hash(priv, &key, info);
-    val = ass_cache_get(priv->cache.outline_cache, &key);
+    val = ass_cache_get(cache->outline_cache, &key);
 
     if (!val) {
         OutlineHashValue v;
@@ -1139,8 +1153,7 @@ get_outline_glyph(ASS_Renderer *priv, GlyphInfo *info, RenderContext *state)
             ass_drawing_hash(drawing);
             if(!ass_drawing_parse(drawing, 0))
                 return;
-            outline_copy(priv->ftlibrary, &drawing->outline,
-                    &v.outline);
+            outline_copy(ftlibrary, &drawing->outline, &v.outline);
             v.advance.x = drawing->advance.x;
             v.advance.y = drawing->advance.y;
             v.asc = drawing->asc;
@@ -1156,8 +1169,8 @@ get_outline_glyph(ASS_Renderer *priv, GlyphInfo *info, RenderContext *state)
                         info->symbol, info->face_index, info->glyph_index,
                         priv->settings.hinting, info->flags);
             if (glyph != NULL) {
-                outline_copy(priv->ftlibrary,
-                        &((FT_OutlineGlyph)glyph)->outline, &v.outline);
+                outline_copy(ftlibrary, &((FT_OutlineGlyph)glyph)->outline,
+                             &v.outline);
                 if (priv->settings.shaper == ASS_SHAPING_SIMPLE) {
                     v.advance.x = d16_to_d6(glyph->advance.x);
                     v.advance.y = d16_to_d6(glyph->advance.y);
@@ -1186,22 +1199,22 @@ get_outline_glyph(ASS_Renderer *priv, GlyphInfo *info, RenderContext *state)
                 advance = info->advance;
 
             draw_opaque_box(priv, info, v.asc, v.desc, v.border, advance,
-                    double_to_d6(info->border_x * priv->border_scale),
-                    double_to_d6(info->border_y * priv->border_scale));
+                            double_to_d6(info->border_x * priv->border_scale),
+                            double_to_d6(info->border_y * priv->border_scale),
+                            ftlibrary);
 
         } else if ((info->border_x > 0 || info->border_y > 0)
                 && double_to_d6(info->scale_x) && double_to_d6(info->scale_y)) {
-
             change_border(priv, info->border_x, info->border_y, state);
-            outline_copy(priv->ftlibrary, v.outline, &v.border);
+            outline_copy(ftlibrary, v.outline, &v.border);
             stroke_outline(priv, v.border,
                            double_to_d6(info->border_x * priv->border_scale),
                            double_to_d6(info->border_y * priv->border_scale),
-                           state);
+                           state, ftlibrary);
         }
 
-        v.lib = priv->ftlibrary;
-        val = ass_cache_put(priv->cache.outline_cache, &key, &v);
+        v.lib = ftlibrary;
+        val = ass_cache_put(cache->outline_cache, &key, &v);
     }
 
     info->hash_key.u.outline.outline = val;
@@ -1300,7 +1313,8 @@ transform_3d(FT_Vector shift, FT_Outline *outline, FT_Outline *border,
  * They are returned in info->bm (glyph), info->bm_o (outline) and info->bm_s (shadow).
  */
 static void
-get_bitmap_glyph(ASS_Renderer *render_priv, GlyphInfo *info, void *rast)
+get_bitmap_glyph(ASS_Renderer *render_priv, GlyphInfo *info, void *rast,
+                 CacheStore *cache, FT_Library ftlibrary)
 {
     BitmapHashValue *val;
     OutlineBitmapHashKey *key = &info->hash_key.u.outline;
@@ -1308,7 +1322,7 @@ get_bitmap_glyph(ASS_Renderer *render_priv, GlyphInfo *info, void *rast)
     if (!info->outline || info->symbol == '\n' || info->symbol == 0 || info->skip)
         return;
 
-    val = ass_cache_get(render_priv->cache.bitmap_cache, &info->hash_key);
+    val = ass_cache_get(cache->bitmap_cache, &info->hash_key);
 
     if (!val) {
         FT_Vector shift;
@@ -1320,8 +1334,8 @@ get_bitmap_glyph(ASS_Renderer *render_priv, GlyphInfo *info, void *rast)
 
         hash_val.bm = hash_val.bm_o = hash_val.bm_s = 0;
 
-        outline_copy(render_priv->ftlibrary, info->outline, &outline);
-        outline_copy(render_priv->ftlibrary, info->border, &border);
+        outline_copy(ftlibrary, info->outline, &outline);
+        outline_copy(ftlibrary, info->border, &border);
 
         // calculating rotation shift vector (from rotation origin to the glyph basepoint)
         shift.x = key->shift_x;
@@ -1365,11 +1379,11 @@ get_bitmap_glyph(ASS_Renderer *render_priv, GlyphInfo *info, void *rast)
         if (error)
             info->symbol = 0;
 
-        val = ass_cache_put(render_priv->cache.bitmap_cache, &info->hash_key,
+        val = ass_cache_put(cache->bitmap_cache, &info->hash_key,
                 &hash_val);
 
-        outline_free(render_priv->ftlibrary, outline);
-        outline_free(render_priv->ftlibrary, border);
+        outline_free(ftlibrary, outline);
+        outline_free(ftlibrary, border);
     }
 
     info->bm = val->bm;
@@ -1894,6 +1908,8 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
     ASS_Shaper *shaper = render_priv->shapers + thread;
     RenderContext *state = render_priv->states + thread;
     ASS_SynthPriv *priv_blur = render_priv->synth_privs + thread;
+    CacheStore *cache = render_priv->caches + thread;
+    FT_Library ftlibrary = *(render_priv->ftlibraries + thread);
 #ifdef CONFIG_RASTERIZER
     void *rast = &render_priv->rasterizers[thread];
 #else
@@ -1909,7 +1925,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
         return 1;
     }
 
-    init_render_context(render_priv, event, state);
+    init_render_context(render_priv, event, state, cache, ftlibrary);
 
     drawing = state->drawing;
     text_info->length = 0;
@@ -2024,7 +2040,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
 
         if (info->drawing) {
             drawing = state->drawing =
-                ass_drawing_new(render_priv->library, render_priv->ftlibrary);
+                ass_drawing_new(render_priv->library, ftlibrary);
         } else {
             fix_glyph_scaling(render_priv, info);
         }
@@ -2058,7 +2074,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
     for (i = 0; i < text_info->length; i++) {
         GlyphInfo *info = glyphs + i;
         while (info) {
-            get_outline_glyph(render_priv, info, state);
+            get_outline_glyph(render_priv, info, state, ftlibrary, cache);
             info = info->next;
         }
         info = glyphs + i;
@@ -2381,7 +2397,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
             key->advance.y =
                 double_to_d6(device_y - (int) device_y +
                         d6_to_double(info->pos.y & SUBPIXEL_MASK)) & ~SUBPIXEL_ACCURACY;
-            get_bitmap_glyph(render_priv, info, rast);
+            get_bitmap_glyph(render_priv, info, rast, cache, ftlibrary);
 
             int bm_x = info->pos.x >> 6,
                 bm_y = info->pos.y >> 6,
@@ -2522,7 +2538,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
 
         fill_composite_hash(&hk, info);
 
-        hv = ass_cache_get(render_priv->cache.composite_cache, &hk);
+        hv = ass_cache_get(cache->composite_cache, &hk);
 
         if(hv){
             info->bm = hv->bm;
@@ -2606,7 +2622,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
             chv.bm_o = info->bm_o;
             chv.bm_s = info->bm_s;
 
-            ass_cache_put(render_priv->cache.composite_cache, &hk, &chv);
+            ass_cache_put(cache->composite_cache, &hk, &chv);
         }
     }
 
@@ -2622,7 +2638,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
     event_images->shift_direction = (valign == VALIGN_TOP) ? 1 : -1;
     event_images->imgs = render_text(render_priv, (int) device_x,
                                      (int) device_y, state, text_info,
-                                     rast);
+                                     rast, cache);
 
     ass_shaper_cleanup(shaper, text_info);
     free_render_context(state);
@@ -2714,6 +2730,8 @@ ass_start_frame(ASS_Renderer *render_priv, ASS_Track *track,
         ass_shaper_set_kerning(shaper, track->Kerning);
         ass_shaper_set_language(shaper, track->Language);
         ass_shaper_set_level(shaper, render_priv->settings.shaper);
+
+        check_cache_limits(render_priv, &render_priv->caches[i]);
     }
 
     // PAR correction
@@ -2734,8 +2752,6 @@ ass_start_frame(ASS_Renderer *render_priv, ASS_Track *track,
     render_priv->prev_images_root = render_priv->images_root;
     render_priv->images_root = 0;
 
-    check_cache_limits(render_priv, &render_priv->cache);
-
     return 0;
 }
 
@@ -2745,6 +2761,7 @@ static int cmp_event_layer(const void *i1, const void *i2)
     const EventImages *p2 = i2;
     ASS_Event *e1 = (ASS_Event*)p1->event;
     ASS_Event *e2 = (ASS_Event*)p2->event;
+#ifdef CONFIG_PTHREAD
     if (p1->valid == p2->valid == 0)
         return 0;
     if (p1->valid == 0)
@@ -2755,6 +2772,7 @@ static int cmp_event_layer(const void *i1, const void *i2)
         return -1;
     if (p1->valid > p2->valid)
         return 1;
+#endif
     if (e1->Layer < e2->Layer)
         return -1;
     if (e1->Layer > e2->Layer)
@@ -3011,6 +3029,7 @@ static void *event_thread(void *priv_in)
         }
         pthread_mutex_unlock(&renderer->cur_event_mutex);
     }
+    pthread_mutex_unlock(&priv->run_mutex);
     return NULL;
 }
 #endif
@@ -3073,7 +3092,9 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
     priv->finished_events = 0;
     pthread_cond_broadcast(&priv->start_frame);
     pthread_mutex_lock(&priv->cur_event_mutex);
-    pthread_cond_wait(&priv->finished_frame, &priv->cur_event_mutex);
+    while (priv->finished_events != priv->rendering_events) {
+        pthread_cond_wait(&priv->finished_frame, &priv->cur_event_mutex);
+    }
     pthread_mutex_unlock(&priv->cur_event_mutex);
 #endif
 

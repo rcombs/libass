@@ -186,13 +186,7 @@ get_cached_metrics(struct ass_shaper_metrics_data *metrics, FT_Face face,
             | FT_LOAD_IGNORE_TRANSFORM;
         GlyphMetricsHashValue new_val;
 
-#ifdef CONFIG_PTHREAD
-        pthread_mutex_lock(&metrics->renderer->ft_mutex);
-#endif
         FT_Error err = FT_Load_Glyph(face, glyph, load_flags);
-#ifdef CONFIG_PTHREAD
-        pthread_mutex_unlock(&metrics->renderer->ft_mutex);
-#endif
         if (err)
             return NULL;
 

@@ -236,6 +236,16 @@ typedef struct {
     unsigned max_bitmaps;
 } TextInfo;
 
+typedef struct {
+    Cache *font_cache;
+    Cache *outline_cache;
+    Cache *bitmap_cache;
+    Cache *composite_cache;
+    size_t glyph_max;
+    size_t bitmap_max_size;
+    size_t composite_max_size;
+} CacheStore;
+
 // Renderer state.
 // Values like current font face, color, screen position, clipping and so on are stored here.
 typedef struct {
@@ -303,17 +313,10 @@ typedef struct {
     int treat_family_as_pattern;
     int wrap_style;
     int font_encoding;
+    
+    FT_Library ftlibrary;
+    CacheStore *cache;
 } RenderContext;
-
-typedef struct {
-    Cache *font_cache;
-    Cache *outline_cache;
-    Cache *bitmap_cache;
-    Cache *composite_cache;
-    size_t glyph_max;
-    size_t bitmap_max_size;
-    size_t composite_max_size;
-} CacheStore;
 
 typedef void (*BitmapBlendFunc)(uint8_t *dst, intptr_t dst_stride,
                                 uint8_t *src, intptr_t src_stride,
@@ -340,7 +343,7 @@ typedef struct {
 
 struct ass_renderer {
     ASS_Library *library;
-    FT_Library ftlibrary;
+    FT_Library ftlibraries[MAX_THREADS];
     FCInstance *fontconfig_priv;
     ASS_Settings settings;
     int render_id;
@@ -376,7 +379,7 @@ struct ass_renderer {
 
     RenderContext states[MAX_THREADS];
     TextInfo text_infos[MAX_THREADS];
-    CacheStore cache;
+    CacheStore caches[MAX_THREADS];
 
 #if CONFIG_RASTERIZER
     ASS_Rasterizer rasterizers[MAX_THREADS];
@@ -396,7 +399,6 @@ struct ass_renderer {
     pthread_cond_t start_frame;
     pthread_cond_t finished_frame;
     pthread_mutex_t cur_event_mutex;
-    pthread_mutex_t ft_mutex;
 };
 
 typedef struct render_priv {

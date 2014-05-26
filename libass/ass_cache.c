@@ -28,10 +28,6 @@
 #include "ass_font.h"
 #include "ass_cache.h"
 
-#ifdef CONFIG_PTHREAD
-#include <pthread.h>
-#endif
-
 // type-specific functions
 // create hash/compare functions for bitmap, outline and composite cache
 #define CREATE_HASH_FUNCTIONS
@@ -213,10 +209,6 @@ struct cache {
     unsigned hits;
     unsigned misses;
     unsigned items;
-
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_t mutex;
-#endif
 };
 
 // Hash for a simple (single value or array) type
@@ -260,20 +252,11 @@ Cache *ass_cache_create(HashFunction hash_func, HashCompare compare_func,
     cache->value_size = value_size;
     cache->map = calloc(cache->buckets, sizeof(CacheItem *));
 
-#ifdef CONFIG_PTHREAD
-    static pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutex_init(&cache->mutex, &attr);
-    pthread_mutexattr_destroy(&attr);
-#endif
     return cache;
 }
 
 void *ass_cache_put(Cache *cache, void *key, void *value)
 {
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_lock(&cache->mutex);
-#endif
     unsigned bucket = cache->hash_func(key, cache->key_size) % cache->buckets;
     CacheItem **bucketptr = &cache->map[bucket];
 
@@ -292,47 +275,29 @@ void *ass_cache_put(Cache *cache, void *key, void *value)
     else
         cache->cache_size++;
 
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_unlock(&cache->mutex);
-#endif
     return item->value;
 }
 
 void *ass_cache_get(Cache *cache, void *key)
 {
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_lock(&cache->mutex);
-#endif
     unsigned bucket = cache->hash_func(key, cache->key_size) % cache->buckets;
     CacheItem *item = cache->map[bucket];
     while (item) {
         if (cache->compare_func(key, item->key, cache->key_size)) {
             cache->hits++;
-#ifdef CONFIG_PTHREAD
-            pthread_mutex_unlock(&cache->mutex);
-#endif
             return item->value;
         }
         item = item->next;
     }
     cache->misses++;
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_unlock(&cache->mutex);
-#endif
     return NULL;
 }
 
 int ass_cache_empty(Cache *cache, size_t max_size)
 {
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_lock(&cache->mutex);
-#endif
     int i;
 
     if (cache->cache_size < max_size) {
-#ifdef CONFIG_PTHREAD
-        pthread_mutex_unlock(&cache->mutex);
-#endif
         return 0;
     }
 
@@ -349,18 +314,12 @@ int ass_cache_empty(Cache *cache, size_t max_size)
 
     cache->items = cache->hits = cache->misses = cache->cache_size = 0;
 
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_unlock(&cache->mutex);
-#endif
     return 1;
 }
 
 void ass_cache_stats(Cache *cache, size_t *size, unsigned *hits,
                      unsigned *misses, unsigned *count)
 {
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_lock(&cache->mutex);
-#endif
     if (size)
         *size = cache->cache_size;
     if (hits)
@@ -369,17 +328,11 @@ void ass_cache_stats(Cache *cache, size_t *size, unsigned *hits,
         *misses = cache->misses;
     if (count)
         *count = cache->items;
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_unlock(&cache->mutex);
-#endif
 }
 
 void ass_cache_done(Cache *cache)
 {
     ass_cache_empty(cache, 0);
-#ifdef CONFIG_PTHREAD
-    pthread_mutex_destroy(&cache->mutex);
-#endif
     free(cache->map);
     free(cache);
 }

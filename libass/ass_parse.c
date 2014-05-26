@@ -95,8 +95,8 @@ void update_font(ASS_Renderer *render_priv, RenderContext *state)
     desc.italic = val;
 
     state->font =
-        ass_font_new(render_priv->cache.font_cache, render_priv->library,
-                     render_priv->ftlibrary, render_priv->fontconfig_priv,
+        ass_font_new(state->cache->font_cache, render_priv->library,
+                     state->ftlibrary, render_priv->fontconfig_priv,
                      &desc);
     free(desc.family);
 }
@@ -116,7 +116,7 @@ void change_border(ASS_Renderer *render_priv, double border_x, double border_y,
         if (!state->stroker) {
             int error;
             error =
-                FT_Stroker_New(render_priv->ftlibrary,
+                FT_Stroker_New(state->ftlibrary,
                                &state->stroker);
             if (error) {
                 ass_msg(render_priv->library, MSGL_V,
@@ -209,7 +209,7 @@ static char *parse_vector_clip(ASS_Renderer *render_priv, char *p,
 
     ass_drawing_free(drawing);
     state->clip_drawing =
-        ass_drawing_new(render_priv->library, render_priv->ftlibrary);
+        ass_drawing_new(render_priv->library, state->ftlibrary);
     drawing = state->clip_drawing;
     skipopt('(');
     res = mystrtoi(&p, &scale);
