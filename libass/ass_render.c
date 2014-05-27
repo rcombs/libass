@@ -3108,8 +3108,8 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
             last = priv->eimg + i;
         }
     cnt = cnt ? i : 0;
-    if (cnt > 0)
-        fix_collisions(priv, last, priv->eimg + cnt - last);
+//    if (cnt > 0)
+//        fix_collisions(priv, last, priv->eimg + cnt - last);
 
     // concat lists
     tail = &priv->images_root;
