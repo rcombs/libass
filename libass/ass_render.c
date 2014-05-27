@@ -2728,13 +2728,19 @@ ass_start_frame(ASS_Renderer *render_priv, ASS_Track *track,
         render_priv->blur_scale = render_priv->border_scale;
     render_priv->border_scale *= settings_priv->font_size_coeff;
 
-    for (unsigned i = 0; i < render_priv->nb_threads; i++) {
+#ifdef CONFIG_PTHREAD
+    unsigned threads = render_priv->nb_threads;
+#else
+    unsigned threads = 1;
+#endif
+
+    for (unsigned i = 0; i < threads; i++) {
         ASS_Shaper *shaper = render_priv->shapers + i;
         ass_shaper_set_kerning(shaper, track->Kerning);
         ass_shaper_set_language(shaper, track->Language);
         ass_shaper_set_level(shaper, render_priv->settings.shaper);
 
-        check_cache_limits(render_priv, &render_priv->caches[i]);
+        check_cache_limits(render_priv, render_priv->caches + i);
     }
 
     // PAR correction
