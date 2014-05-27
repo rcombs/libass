@@ -3117,7 +3117,7 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
 
     // concat lists
     tail = &priv->images_root;
-    for (i = 0; i < cnt && priv->eimg[i].valid; ++i) {
+    for (i = 0; i < cnt; ++i) {
         ASS_Image *cur = priv->eimg[i].imgs;
         while (cur) {
             *tail = cur;
