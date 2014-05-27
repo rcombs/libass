@@ -204,15 +204,22 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
 
 static void free_list_clear(ASS_Renderer *render_priv)
 {
-    if (render_priv->free_head) {
-        FreeList *item = render_priv->free_head;
-        while(item) {
-            FreeList *oi = item;
-            ass_aligned_free(item->object);
-            item = item->next;
-            free(oi);
+#ifdef CONFIG_PTHREAD
+    unsigned threads = render_priv->nb_threads;
+#else
+    unsigned threads = 1;
+#endif
+    for (unsigned i = 0; i < threads; i++) {
+        if (render_priv->free_head[i]) {
+            FreeList *item = render_priv->free_head[i];
+            while(item) {
+                FreeList *oi = item;
+                ass_aligned_free(item->object);
+                item = item->next;
+                free(oi);
+            }
+            render_priv->free_head[i] = NULL;
         }
-        render_priv->free_head = NULL;
     }
 }
 
@@ -555,17 +562,19 @@ render_glyph(ASS_Renderer *render_priv, Bitmap *bm, int dst_x, int dst_y,
     return tail;
 }
 
-static void free_list_add(ASS_Renderer *render_priv, void *object)
+static void free_list_add(RenderContext *ctx, void *object)
 {
-    if (!render_priv->free_head) {
-        render_priv->free_head = calloc(1, sizeof(FreeList));
-        render_priv->free_head->object = object;
-        render_priv->free_tail = render_priv->free_head;
+    FreeList **free_head = ctx->free_head,
+             **free_tail = ctx->free_tail;
+    if (!*free_head) {
+        *free_head = calloc(1, sizeof(FreeList));
+        (*free_head)->object = object;
+        *free_tail = *free_head;
     } else {
         FreeList *l = calloc(1, sizeof(FreeList));
         l->object = object;
-        render_priv->free_tail->next = l;
-        render_priv->free_tail = render_priv->free_tail->next;
+        (*free_tail)->next = l;
+        *free_tail = (*free_tail)->next;
     }
 }
 
@@ -673,7 +682,7 @@ static void blend_vector_clip(ASS_Renderer *render_priv, ASS_Image *head,
             // Allocate new buffer and add to free list
             nbuffer = ass_aligned_alloc(32, as * ah);
             if (!nbuffer) return;
-            free_list_add(render_priv, nbuffer);
+            free_list_add(state, nbuffer);
 
             // Blend together
             memcpy(nbuffer, abuffer, ((ah - 1) * as) + aw);
@@ -693,7 +702,7 @@ static void blend_vector_clip(ASS_Renderer *render_priv, ASS_Image *head,
             unsigned ns = ass_align(align, w);
             nbuffer = ass_aligned_alloc(align, ns * h);
             if (!nbuffer) return;
-            free_list_add(render_priv, nbuffer);
+            free_list_add(state, nbuffer);
 
             // Blend together
             render_priv->mul_bitmaps_func(nbuffer, ns,
@@ -810,7 +819,7 @@ static ASS_Image *render_text(ASS_Renderer *render_priv, int dst_x, int dst_y,
             unsigned ns = ass_align(align, w);
             uint8_t* nbuffer = ass_aligned_alloc(align, ns * cur->h);
             if (!nbuffer) continue;
-            free_list_add(render_priv, nbuffer);
+            free_list_add(state, nbuffer);
 
             // Copy
             render_priv->restride_bitmap_func(nbuffer, ns,
@@ -900,7 +909,8 @@ void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style,
 static void
 init_render_context(ASS_Renderer *render_priv, ASS_Event *event,
                     RenderContext *state, CacheStore *cache,
-                    FT_Library ftlibrary)
+                    FT_Library ftlibrary, FreeList **free_head,
+                    FreeList **free_tail)
 {
     state->event = event;
     state->style = render_priv->track->styles + event->Style;
@@ -935,6 +945,9 @@ init_render_context(ASS_Renderer *render_priv, ASS_Event *event,
     state->drawing = ass_drawing_new(render_priv->library, ftlibrary);
 
     apply_transition_effects(render_priv, event, state);
+    
+    state->free_head = free_head;
+    state->free_tail = free_tail;
 }
 
 static void free_render_context(RenderContext *state)
@@ -1930,7 +1943,9 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
         return 1;
     }
 
-    init_render_context(render_priv, event, state, cache, ftlibrary);
+    init_render_context(render_priv, event, state, cache, ftlibrary,
+                        render_priv->free_head + thread,
+                        render_priv->free_tail + thread);
 
     drawing = state->drawing;
     text_info->length = 0;

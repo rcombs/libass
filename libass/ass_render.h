@@ -316,6 +316,9 @@ typedef struct {
     
     FT_Library ftlibrary;
     CacheStore *cache;
+
+    FreeList **free_head;
+    FreeList **free_tail;
 } RenderContext;
 
 typedef void (*BitmapBlendFunc)(uint8_t *dst, intptr_t dst_stride,
@@ -389,8 +392,8 @@ struct ass_renderer {
     BEBlurFunc be_blur_func;
     RestrideBitmapFunc restride_bitmap_func;
 
-    FreeList *free_head;
-    FreeList *free_tail;
+    FreeList *free_head[MAX_THREADS];
+    FreeList *free_tail[MAX_THREADS];
     
     volatile unsigned rendering_events;
     volatile unsigned cur_event;
