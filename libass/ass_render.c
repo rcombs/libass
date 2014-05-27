@@ -2765,16 +2765,12 @@ static int cmp_event_layer(const void *i1, const void *i2)
     ASS_Event *e1 = (ASS_Event*)p1->event;
     ASS_Event *e2 = (ASS_Event*)p2->event;
 #ifdef CONFIG_PTHREAD
-    if (p1->valid == p2->valid == 0)
+    if (p1->valid == 0 && p2->valid == 0)
         return 0;
     if (p1->valid == 0)
         return 1;
     if (p2->valid == 0)
         return -1;
-    if (p1->valid < p2->valid)
-        return -1;
-    if (p1->valid > p2->valid)
-        return 1;
 #endif
     if (e1->Layer < e2->Layer)
         return -1;
@@ -3108,8 +3104,8 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
             last = priv->eimg + i;
         }
     cnt = cnt ? i : 0;
-//    if (cnt > 0)
-//        fix_collisions(priv, last, priv->eimg + cnt - last);
+    if (cnt > 0)
+        fix_collisions(priv, last, priv->eimg + cnt - last);
 
     // concat lists
     tail = &priv->images_root;
