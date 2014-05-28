@@ -3030,12 +3030,9 @@ static void *event_thread(void *priv_in)
 {
     ASS_ThreadInfo *priv = priv_in;
     ASS_Renderer *renderer = priv->renderer;
+    pthread_mutex_lock(&renderer->cur_event_mutex);
     while (1) {
-        pthread_mutex_lock(&renderer->cur_event_mutex);
-        if (!renderer->rendering_events)
-            pthread_cond_wait(&renderer->start_frame,
-                              &renderer->cur_event_mutex);
-        while (renderer->cur_event < renderer->rendering_events) {
+        if (renderer->cur_event < renderer->rendering_events) {
             int my_event = renderer->cur_event++;
             pthread_mutex_unlock(&renderer->cur_event_mutex);
             EventImages *event_images = renderer->eimg + my_event;
@@ -3043,12 +3040,12 @@ static void *event_thread(void *priv_in)
                 !ass_render_event(renderer, event_images->event, event_images,
                                   priv->id);
             pthread_mutex_lock(&renderer->cur_event_mutex);
-            if (++renderer->finished_events == renderer->rendering_events) { // Last one
-                pthread_cond_signal(&renderer->finished_frame);
-                break;
-            }
+            if (++renderer->finished_events == renderer->rendering_events)
+                pthread_cond_signal(&renderer->finished_frame); // Last one
+        } else {
+            pthread_cond_wait(&renderer->start_frame,
+                              &renderer->cur_event_mutex);
         }
-        pthread_mutex_unlock(&renderer->cur_event_mutex);
     }
     return NULL;
 }
