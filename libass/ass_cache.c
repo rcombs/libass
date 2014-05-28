@@ -249,6 +249,8 @@ Cache *ass_cache_create(HashFunction hash_func, HashCompare compare_func,
                         size_t key_size, size_t value_size)
 {
     Cache *cache = calloc(1, sizeof(*cache));
+    if (!cache)
+        return NULL;
     cache->buckets = 0xFFFF;
     cache->hash_func = hash_simple;
     cache->compare_func = compare_simple;
@@ -263,6 +265,10 @@ Cache *ass_cache_create(HashFunction hash_func, HashCompare compare_func,
     cache->key_size = key_size;
     cache->value_size = value_size;
     cache->map = calloc(cache->buckets, sizeof(CacheItem *));
+    if (!cache->map) {
+        free(cache);
+        return NULL;
+    }
 
     return cache;
 }
@@ -296,13 +302,21 @@ void ass_cache_merge(Cache *dst, Cache *src)
     src->add_items = NULL;
 }
 
-void *ass_cache_put(Cache *cache, void *key, void *value)
+static CacheItem *create_item(Cache *cache, void *key, void *value)
 {
     CacheItem *item = calloc(1, sizeof(CacheItem));
+    if (!item)
+        return NULL;
     item->key = malloc(cache->key_size);
     item->value = malloc(cache->value_size);
     memcpy(item->key, key, cache->key_size);
     memcpy(item->value, value, cache->value_size);
+    return item;
+}
+
+void *ass_cache_put(Cache *cache, void *key, void *value)
+{
+    CacheItem *item = create_item(cache, key, value);
 
     item->next = cache->add_items;
     cache->add_items = item;
@@ -312,32 +326,23 @@ void *ass_cache_put(Cache *cache, void *key, void *value)
 
 void *ass_cache_put_now(Cache *cache, void *key, void *value)
 {
-    CacheItem *item = calloc(1, sizeof(CacheItem));
-    item->key = malloc(cache->key_size);
-    item->value = malloc(cache->value_size);
-    memcpy(item->key, key, cache->key_size);
-    memcpy(item->value, value, cache->value_size);
+    CacheItem *item = create_item(cache, key, value);
 
-    unsigned bucket =
-        cache->hash_func(item->key, cache->key_size) % cache->buckets;
-    CacheItem **bucketptr = &cache->map[bucket];
-
-    item->next = *bucketptr;
-    *bucketptr = item;
-
-    cache->items++;
-    if (cache->size_func)
-        cache->cache_size += cache->size_func(item->value, cache->value_size);
-    else
-        cache->cache_size++;
-
-    return item->value;
+    return ass_cache_put_real(cache, item);
 }
 
 void *ass_cache_get(Cache *cache, void *key)
 {
     unsigned bucket = cache->hash_func(key, cache->key_size) % cache->buckets;
     CacheItem *item = cache->map[bucket];
+    while (item) {
+        if (cache->compare_func(key, item->key, cache->key_size)) {
+            cache->hits++;
+            return item->value;
+        }
+        item = item->next;
+    }
+    item = cache->add_items;
     while (item) {
         if (cache->compare_func(key, item->key, cache->key_size)) {
             cache->hits++;
