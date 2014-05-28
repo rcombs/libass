@@ -3032,7 +3032,9 @@ static void *event_thread(void *priv_in)
     ASS_Renderer *renderer = priv->renderer;
     while (1) {
         pthread_mutex_lock(&renderer->cur_event_mutex);
-        pthread_cond_wait(&renderer->start_frame, &renderer->cur_event_mutex);
+        if (!renderer->rendering_events)
+            pthread_cond_wait(&renderer->start_frame,
+                              &renderer->cur_event_mutex);
         while (renderer->cur_event < renderer->rendering_events) {
             int my_event = renderer->cur_event++;
             pthread_mutex_unlock(&renderer->cur_event_mutex);
@@ -3104,9 +3106,9 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
     }
 
 #ifdef CONFIG_PTHREAD
+    pthread_mutex_lock(&priv->cur_event_mutex);
     priv->rendering_events = cnt;
     priv->cur_event = priv->finished_events = 0;
-    pthread_mutex_lock(&priv->cur_event_mutex);
     pthread_cond_broadcast(&priv->start_frame);
     while (priv->finished_events < priv->rendering_events)
         pthread_cond_wait(&priv->finished_frame, &priv->cur_event_mutex);
