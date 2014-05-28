@@ -197,7 +197,8 @@ get_cached_metrics(struct ass_shaper_metrics_data *metrics, FT_Face face,
         if (metrics->vertical && unicode >= VERTICAL_LOWER_BOUND)
             new_val.metrics.horiAdvance = new_val.metrics.vertAdvance;
 
-        val = ass_cache_put(metrics->metrics_cache, &metrics->hash_key, &new_val);
+        val = ass_cache_put_now(metrics->metrics_cache, &metrics->hash_key,
+                                &new_val);
     }
 
     return val;

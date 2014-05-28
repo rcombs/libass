@@ -382,6 +382,7 @@ struct ass_renderer {
     RenderContext states[MAX_THREADS];
     TextInfo text_infos[MAX_THREADS];
     CacheStore caches[MAX_THREADS];
+    CacheStore master_cache;
 
 #if CONFIG_RASTERIZER
     ASS_Rasterizer rasterizers[MAX_THREADS];

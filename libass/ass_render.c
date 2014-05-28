@@ -106,12 +106,12 @@ static int init_thread(ASS_Renderer *priv, unsigned i)
 #endif
 
     priv->caches[i].font_cache = ass_font_cache_create();
-    priv->caches[i].bitmap_cache = ass_bitmap_cache_create();
-    priv->caches[i].composite_cache = ass_composite_cache_create();
-    priv->caches[i].outline_cache = ass_outline_cache_create();
-    priv->caches[i].glyph_max = GLYPH_CACHE_MAX;
-    priv->caches[i].bitmap_max_size = BITMAP_CACHE_MAX_SIZE;
-    priv->caches[i].composite_max_size = COMPOSITE_CACHE_MAX_SIZE;
+    priv->caches[i].bitmap_cache =
+        ass_cache_clone(priv->master_cache.bitmap_cache);
+    priv->caches[i].composite_cache =
+        ass_cache_clone(priv->master_cache.composite_cache);
+    priv->caches[i].outline_cache =
+        ass_cache_clone(priv->master_cache.outline_cache);
 
     return 0;
 }
@@ -130,6 +130,13 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
         goto ass_init_exit;
 
     priv->library = library;
+
+    priv->master_cache.bitmap_cache = ass_bitmap_cache_create();
+    priv->master_cache.composite_cache = ass_composite_cache_create();
+    priv->master_cache.outline_cache = ass_outline_cache_create();
+    priv->master_cache.glyph_max = GLYPH_CACHE_MAX;
+    priv->master_cache.bitmap_max_size = BITMAP_CACHE_MAX_SIZE;
+    priv->master_cache.composite_max_size = COMPOSITE_CACHE_MAX_SIZE;
 
 #ifdef CONFIG_PTHREAD
     pthread_mutex_init(&priv->cur_event_mutex, &library->pthread_mutexattr);
@@ -236,6 +243,10 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     int threads = 1;
 #endif
 
+    ass_cache_done(render_priv->master_cache.bitmap_cache);
+    ass_cache_done(render_priv->master_cache.composite_cache);
+    ass_cache_done(render_priv->master_cache.outline_cache);
+
 #ifdef CONFIG_PTHREAD
     render_priv->cur_event = 0;
     render_priv->finished_events = 0;
@@ -243,9 +254,9 @@ void ass_renderer_done(ASS_Renderer *render_priv)
 #endif
     for (i = 0; i < threads; i++) {
         ass_cache_done(render_priv->caches[i].font_cache);
-        ass_cache_done(render_priv->caches[i].bitmap_cache);
-        ass_cache_done(render_priv->caches[i].composite_cache);
-        ass_cache_done(render_priv->caches[i].outline_cache);
+        ass_cache_dupe_done(render_priv->caches[i].bitmap_cache);
+        ass_cache_dupe_done(render_priv->caches[i].composite_cache);
+        ass_cache_dupe_done(render_priv->caches[i].outline_cache);
 #ifdef CONFIG_PTHREAD
         pthread_cancel(render_priv->threads[i].thread);
 #endif
@@ -2679,8 +2690,9 @@ void ass_free_images(ASS_Image *img)
 /**
  * \brief Check cache limits and reset cache if they are exceeded
  */
-static void check_cache_limits(ASS_Renderer *priv, CacheStore *cache)
+static void check_cache_limits(ASS_Renderer *priv)
 {
+    CacheStore *cache = &priv->master_cache;
     if (ass_cache_empty(cache->bitmap_cache, cache->bitmap_max_size)) {
         ass_free_images(priv->prev_images_root);
         priv->prev_images_root = 0;
@@ -2753,9 +2765,9 @@ ass_start_frame(ASS_Renderer *render_priv, ASS_Track *track,
         ass_shaper_set_kerning(shaper, track->Kerning);
         ass_shaper_set_language(shaper, track->Language);
         ass_shaper_set_level(shaper, render_priv->settings.shaper);
-
-        check_cache_limits(render_priv, render_priv->caches + i);
     }
+
+    check_cache_limits(render_priv);
 
     // PAR correction
     double par = render_priv->settings.par;
@@ -3051,6 +3063,23 @@ static void *event_thread(void *priv_in)
 }
 #endif
 
+void merge_caches(ASS_Renderer *priv)
+{
+#ifdef CONFIG_PTHREAD
+    unsigned threads = priv->nb_threads;
+#else
+    unsigned threads = 1;
+#endif
+    for (unsigned i = 0; i < threads; ++i) {
+        ass_cache_merge(priv->master_cache.outline_cache,
+                        priv->caches[i].outline_cache);
+        ass_cache_merge(priv->master_cache.bitmap_cache,
+                        priv->caches[i].bitmap_cache);
+        ass_cache_merge(priv->master_cache.composite_cache,
+                        priv->caches[i].composite_cache);
+    }
+}
+
 /**
  * \brief render a frame
  * \param priv library handle
@@ -3112,6 +3141,8 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
     priv->rendering_events = priv->cur_event = priv->finished_events = 0;
     pthread_mutex_unlock(&priv->cur_event_mutex);
 #endif
+
+    merge_caches(priv);
 
     // sort by layer
     qsort(priv->eimg, cnt, sizeof(EventImages), cmp_event_layer);
