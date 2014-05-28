@@ -33,6 +33,7 @@
 #ifdef CONFIG_PTHREAD
 #define MAX_THREADS 16
 #include <pthread.h>
+#include <stdatomic.h>
 #else
 #define MAX_THREADS 1
 #endif
@@ -396,9 +397,9 @@ struct ass_renderer {
     FreeList *free_head[MAX_THREADS];
     FreeList *free_tail[MAX_THREADS];
 
-    volatile unsigned rendering_events;
-    volatile unsigned cur_event;
-    volatile unsigned finished_events;
+    unsigned rendering_events;
+    atomic_uint cur_event;
+    atomic_uint finished_events;
     pthread_cond_t start_frame;
     pthread_cond_t finished_frame;
     pthread_mutex_t cur_event_mutex;

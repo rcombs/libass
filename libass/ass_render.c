@@ -3042,21 +3042,24 @@ static void *event_thread(void *priv_in)
 {
     ASS_ThreadInfo *priv = priv_in;
     ASS_Renderer *renderer = priv->renderer;
-    pthread_mutex_lock(&renderer->cur_event_mutex);
+//    pthread_mutex_lock(&renderer->cur_event_mutex);
     while (1) {
-        if (renderer->cur_event < renderer->rendering_events) {
-            int my_event = renderer->cur_event++;
-            pthread_mutex_unlock(&renderer->cur_event_mutex);
+        int my_event;
+        if ((my_event = atomic_fetch_add(&renderer->cur_event, 1)) <
+            renderer->rendering_events) {
             EventImages *event_images = renderer->eimg + my_event;
             event_images->valid =
                 !ass_render_event(renderer, event_images->event, event_images,
                                   priv->id);
-            pthread_mutex_lock(&renderer->cur_event_mutex);
-            if (++renderer->finished_events == renderer->rendering_events)
+//            pthread_mutex_lock(&renderer->cur_event_mutex);
+            if (atomic_fetch_add(&renderer->finished_events, 1) ==
+                renderer->rendering_events - 1)
                 pthread_cond_signal(&renderer->finished_frame); // Last one
         } else {
+            pthread_mutex_lock(&renderer->cur_event_mutex);
             pthread_cond_wait(&renderer->start_frame,
                               &renderer->cur_event_mutex);
+            pthread_mutex_unlock(&renderer->cur_event_mutex);
         }
     }
     return NULL;
@@ -3136,9 +3139,10 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
     priv->rendering_events = cnt;
     priv->cur_event = priv->finished_events = 0;
     pthread_cond_broadcast(&priv->start_frame);
-    while (priv->finished_events < priv->rendering_events)
+    while (atomic_load(&priv->finished_events) < priv->rendering_events)
         pthread_cond_wait(&priv->finished_frame, &priv->cur_event_mutex);
-    priv->rendering_events = priv->cur_event = priv->finished_events = 0;
+    priv->rendering_events = 0;
+    priv->cur_event = priv->finished_events = 0;
     pthread_mutex_unlock(&priv->cur_event_mutex);
 #endif
 
