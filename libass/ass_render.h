@@ -355,11 +355,6 @@ struct ass_renderer {
 
     int has_vector_clip;
 
-#ifdef CONFIG_PTHREAD
-    ASS_ThreadInfo threads[MAX_THREADS];
-    unsigned nb_threads;
-#endif
-
     ASS_Image *images_root;     // rendering result is stored here
     ASS_Image *prev_images_root;
     int cache_cleared;
@@ -397,12 +392,19 @@ struct ass_renderer {
     FreeList *free_head[MAX_THREADS];
     FreeList *free_tail[MAX_THREADS];
 
+#ifdef CONFIG_PTHREAD
+    ASS_ThreadInfo threads[MAX_THREADS];
+    unsigned nb_threads;
+
     unsigned rendering_events;
     atomic_uint cur_event;
     atomic_uint finished_events;
     pthread_cond_t start_frame;
     pthread_cond_t finished_frame;
     pthread_mutex_t cur_event_mutex;
+
+    int stop_threads;
+#endif
 };
 
 typedef struct render_priv {

@@ -248,15 +248,17 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     atomic_store(&render_priv->cur_event, 0);
     atomic_store(&render_priv->finished_events, 0);
     render_priv->rendering_events = 0;
+    render_priv->stop_threads = 1;
+    pthread_cond_broadcast(&render_priv->start_frame);
 #endif
     for (i = 0; i < threads; i++) {
+#ifdef CONFIG_PTHREAD
+        pthread_join(render_priv->threads[i].thread, NULL);
+#endif
         ass_cache_done(render_priv->caches[i].font_cache);
         ass_cache_dupe_done(render_priv->caches[i].bitmap_cache);
         ass_cache_dupe_done(render_priv->caches[i].composite_cache);
         ass_cache_dupe_done(render_priv->caches[i].outline_cache);
-#ifdef CONFIG_PTHREAD
-        pthread_cancel(render_priv->threads[i].thread);
-#endif
 #if CONFIG_RASTERIZER
         rasterizer_done(&render_priv->rasterizers[i]);
 #endif
@@ -3046,7 +3048,7 @@ static void *event_thread(void *priv_in)
 {
     ASS_ThreadInfo *priv = priv_in;
     ASS_Renderer *renderer = priv->renderer;
-    while (1) {
+    while (!renderer->stop_threads) {
         int my_event;
         if ((my_event = atomic_fetch_add(&renderer->cur_event, 1)) <
             renderer->rendering_events) {
