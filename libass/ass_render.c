@@ -248,8 +248,8 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     ass_cache_done(render_priv->master_cache.outline_cache);
 
 #ifdef CONFIG_PTHREAD
-    render_priv->cur_event = 0;
-    render_priv->finished_events = 0;
+    atomic_store(&render_priv->cur_event, 0);
+    atomic_store(&render_priv->finished_events, 0);
     render_priv->rendering_events = 0;
 #endif
     for (i = 0; i < threads; i++) {
