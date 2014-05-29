@@ -235,9 +235,6 @@ void ass_renderer_done(ASS_Renderer *render_priv)
 
     int i;
 #ifdef CONFIG_PTHREAD
-    pthread_mutex_destroy(&render_priv->cur_event_mutex);
-    pthread_cond_destroy(&render_priv->start_frame);
-    pthread_cond_destroy(&render_priv->finished_frame);
     int threads = render_priv->nb_threads;
 #else
     int threads = 1;
@@ -276,6 +273,13 @@ void ass_renderer_done(ASS_Renderer *render_priv)
         if (render_priv->ftlibraries[i])
             FT_Done_FreeType(render_priv->ftlibraries[i]);
     }
+
+#ifdef CONFIG_PTHREAD
+    pthread_mutex_destroy(&render_priv->cur_event_mutex);
+    pthread_cond_destroy(&render_priv->start_frame);
+    pthread_cond_destroy(&render_priv->finished_frame);
+#endif
+
     free(render_priv->synth_privs);
     free(render_priv->shapers);
     if (render_priv->fontconfig_priv)
