@@ -3042,7 +3042,6 @@ static void *event_thread(void *priv_in)
 {
     ASS_ThreadInfo *priv = priv_in;
     ASS_Renderer *renderer = priv->renderer;
-//    pthread_mutex_lock(&renderer->cur_event_mutex);
     while (1) {
         int my_event;
         if ((my_event = atomic_fetch_add(&renderer->cur_event, 1)) <
@@ -3051,7 +3050,6 @@ static void *event_thread(void *priv_in)
             event_images->valid =
                 !ass_render_event(renderer, event_images->event, event_images,
                                   priv->id);
-//            pthread_mutex_lock(&renderer->cur_event_mutex);
             if (atomic_fetch_add(&renderer->finished_events, 1) ==
                 renderer->rendering_events - 1)
                 pthread_cond_signal(&renderer->finished_frame); // Last one
@@ -3137,12 +3135,14 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
 #ifdef CONFIG_PTHREAD
     pthread_mutex_lock(&priv->cur_event_mutex);
     priv->rendering_events = cnt;
-    priv->cur_event = priv->finished_events = 0;
+    atomic_store(&priv->cur_event, 0);
+    atomic_store(&priv->finished_events, 0);
     pthread_cond_broadcast(&priv->start_frame);
     while (atomic_load(&priv->finished_events) < priv->rendering_events)
         pthread_cond_wait(&priv->finished_frame, &priv->cur_event_mutex);
     priv->rendering_events = 0;
-    priv->cur_event = priv->finished_events = 0;
+    atomic_store(&priv->cur_event, 0);
+    atomic_store(&priv->finished_events, 0);
     pthread_mutex_unlock(&priv->cur_event_mutex);
 #endif
 
