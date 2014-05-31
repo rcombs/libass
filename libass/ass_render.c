@@ -116,7 +116,9 @@ static int init_thread(ASS_Renderer *priv, unsigned i)
     return 0;
 }
 
+#ifdef CONFIG_PTHREAD
 static void *event_thread(void *priv);
+#endif
 
 ASS_Renderer *ass_renderer_init(ASS_Library *library)
 {
@@ -155,8 +157,8 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
     priv->shapers = ass_shaper_new(0, threads, priv);
     priv->synth_privs = ass_synth_init(BLUR_MAX_RADIUS, threads);
 #else
-    init_thread(renderer, 0);
-    priv->shapers = ass_shaper_new(0, 1);
+    init_thread(priv, 0);
+    priv->shapers = ass_shaper_new(0, 1, priv);
     priv->synth_privs = ass_synth_init(BLUR_MAX_RADIUS, 1);
 #endif
 
@@ -3103,15 +3105,20 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
 
     // call fix_collisions for each group of events with the same layer
     last = priv->eimg;
-
+#ifdef CONFIG_PTHREAD
     for (i = 1; i < cnt && priv->eimg[i].valid; ++i)
+#else
+    for (i = 1; i < cnt; ++i)
+#endif
         if (last->event->Layer != priv->eimg[i].event->Layer) {
             fix_collisions(priv, last, priv->eimg + i - last);
             last = priv->eimg + i;
         }
+#ifdef CONFIG_PTHREAD
     cnt = cnt ? i : 0;
     if (cnt > 0 && !priv->eimg[cnt - 1].valid)
         --cnt;
+#endif
     if (cnt > 0)
         fix_collisions(priv, last, priv->eimg + cnt - last);
 
