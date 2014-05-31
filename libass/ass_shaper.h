@@ -34,7 +34,7 @@ struct ass_shaper {
     FriBidiLevel *emblevels;
     FriBidiStrIndex *cmap;
     FriBidiParType base_direction;
-    
+
     ASS_Renderer *renderer;
 
 #ifdef CONFIG_HARFBUZZ

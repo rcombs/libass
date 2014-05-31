@@ -313,7 +313,7 @@ typedef struct {
     int treat_family_as_pattern;
     int wrap_style;
     int font_encoding;
-    
+
     FT_Library ftlibrary;
     CacheStore *cache;
 
@@ -394,7 +394,7 @@ struct ass_renderer {
 
     FreeList *free_head[MAX_THREADS];
     FreeList *free_tail[MAX_THREADS];
-    
+
     volatile unsigned rendering_events;
     volatile unsigned cur_event;
     volatile unsigned finished_events;

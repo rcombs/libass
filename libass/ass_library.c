@@ -41,7 +41,7 @@ ASS_Library *ass_library_init(void)
 {
     ASS_Library* lib = calloc(1, sizeof(*lib));
     lib->msg_callback = ass_msg_handler;
-    
+
 #ifdef CONFIG_PTHREAD
     pthread_attr_init(&lib->pthread_attr);
     pthread_mutexattr_init(&lib->pthread_mutexattr);

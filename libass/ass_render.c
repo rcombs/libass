@@ -139,9 +139,6 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
     for (unsigned i = 0; i < threads; i++) {
         priv->threads[i].id = i;
         priv->threads[i].renderer = priv;
-        pthread_mutex_init(&priv->threads[i].run_mutex,
-                           &library->pthread_mutexattr);
-        pthread_mutex_lock(&priv->threads[i].run_mutex);
         if (pthread_create(&priv->threads[i].thread, &library->pthread_attr,
                            &event_thread, &priv->threads[i])) {
             free(priv);
@@ -945,7 +942,7 @@ init_render_context(ASS_Renderer *render_priv, ASS_Event *event,
     state->drawing = ass_drawing_new(render_priv->library, ftlibrary);
 
     apply_transition_effects(render_priv, event, state);
-    
+
     state->free_head = free_head;
     state->free_tail = free_tail;
 }
@@ -3044,8 +3041,10 @@ static void *event_thread(void *priv_in)
                 !ass_render_event(renderer, event_images->event, event_images,
                                   priv->id);
             pthread_mutex_lock(&renderer->cur_event_mutex);
-            if (++renderer->finished_events == renderer->rendering_events) // Last one
+            if (++renderer->finished_events == renderer->rendering_events) { // Last one
                 pthread_cond_signal(&renderer->finished_frame);
+                break;
+            }
         }
         pthread_mutex_unlock(&renderer->cur_event_mutex);
     }
@@ -3120,6 +3119,7 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
 
     // call fix_collisions for each group of events with the same layer
     last = priv->eimg;
+
 #ifdef CONFIG_PTHREAD
     for (i = 1; i < cnt && priv->eimg[i].valid; ++i)
 #else

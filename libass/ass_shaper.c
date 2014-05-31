@@ -362,7 +362,7 @@ static hb_font_t *get_hb_font(ASS_Shaper *shaper, GlyphInfo *info)
             font->shaper_priv->metrics_data[info->face_index];
         metrics->metrics_cache = shaper->metrics_cache;
         metrics->vertical = info->font->desc.vertical;
-        
+
         metrics->renderer = shaper->renderer;
 
         hb_font_funcs_t *funcs = hb_font_funcs_create();
