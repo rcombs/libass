@@ -337,7 +337,6 @@ typedef struct {
     pthread_t thread;
     unsigned id;
     ASS_Renderer *renderer;
-    pthread_mutex_t run_mutex;
 } ASS_ThreadInfo;
 #endif
 

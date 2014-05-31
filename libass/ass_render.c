@@ -123,7 +123,7 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
     ASS_Renderer *priv = NULL;
 
     priv = calloc(1, sizeof(ASS_Renderer));
-    
+
     if (!priv)
         goto ass_init_exit;
 
@@ -230,15 +230,18 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     int threads = 1;
 #endif
 
+#ifdef CONFIG_PTHREAD
+    render_priv->cur_event = 0;
+    render_priv->finished_events = 0;
+    render_priv->rendering_events = 0;
+#endif
     for (i = 0; i < threads; i++) {
         ass_cache_done(render_priv->caches[i].font_cache);
         ass_cache_done(render_priv->caches[i].bitmap_cache);
         ass_cache_done(render_priv->caches[i].composite_cache);
         ass_cache_done(render_priv->caches[i].outline_cache);
 #ifdef CONFIG_PTHREAD
-        pthread_mutex_unlock(&render_priv->threads[i].run_mutex);
-        pthread_join(render_priv->threads[i].thread, NULL);
-        pthread_mutex_destroy(&render_priv->threads[i].run_mutex);
+        pthread_cancel(render_priv->threads[i].thread);
 #endif
 #if CONFIG_RASTERIZER
         rasterizer_done(&render_priv->rasterizers[i]);
@@ -3011,7 +3014,7 @@ static void *event_thread(void *priv_in)
 {
     ASS_ThreadInfo *priv = priv_in;
     ASS_Renderer *renderer = priv->renderer;
-    while (pthread_mutex_trylock(&priv->run_mutex) == EBUSY) {
+    while (1) {
         pthread_mutex_lock(&renderer->cur_event_mutex);
         pthread_cond_wait(&renderer->start_frame, &renderer->cur_event_mutex);
         int my_event = 0;
@@ -3029,7 +3032,6 @@ static void *event_thread(void *priv_in)
         }
         pthread_mutex_unlock(&renderer->cur_event_mutex);
     }
-    pthread_mutex_unlock(&priv->run_mutex);
     return NULL;
 }
 #endif
