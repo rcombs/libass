@@ -3022,7 +3022,6 @@ static void *event_thread(void *priv_in)
             my_event = renderer->cur_event++;
             pthread_mutex_unlock(&renderer->cur_event_mutex);
             EventImages *event_images = renderer->eimg + my_event;
-            fprintf(stderr, "THREAD: %u; EVENT: %u; TOTAL: %u\n", priv->id, my_event, renderer->rendering_events);
             event_images->valid =
                 !ass_render_event(renderer,  event_images->event, event_images,
                                   priv->id);
@@ -3088,7 +3087,6 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
     }
 
 #ifdef CONFIG_PTHREAD
-    fprintf(stderr, "DOING SHIT\n");
     priv->rendering_events = cnt;
     priv->cur_event = 0;
     priv->finished_events = 0;
