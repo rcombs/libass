@@ -105,7 +105,7 @@ typedef struct {
     int shift_direction;
     ASS_Event *event;
 #ifdef CONFIG_PTHREAD
-    int valid;
+    volatile int valid;
 #endif
 } EventImages;
 
@@ -392,9 +392,9 @@ struct ass_renderer {
     FreeList *free_head;
     FreeList *free_tail;
     
-    unsigned rendering_events;
-    unsigned cur_event;
-    unsigned finished_events;
+    volatile unsigned rendering_events;
+    volatile unsigned cur_event;
+    volatile unsigned finished_events;
     pthread_cond_t start_frame;
     pthread_cond_t finished_frame;
     pthread_mutex_t cur_event_mutex;
