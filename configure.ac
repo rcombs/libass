@@ -142,8 +142,16 @@ PKG_CHECK_MODULES([FRIBIDI], fribidi >= 0.19.0, [
     AC_DEFINE(CONFIG_FRIBIDI, 1, [found fribidi via pkg-config])
     ])
 
+AX_PTHREAD([
+    CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
+    LIBS="$LIBS $PTHREAD_LIBS"
+    AC_DEFINE(CONFIG_PTHREAD, 1, [found pthreads via AX_PTHREAD])
+	pthread=true
+    ])
+
 if test x$enable_fontconfig != xno; then
 PKG_CHECK_MODULES([FONTCONFIG], fontconfig >= 2.4.2, [
+    CC="$PTHREAD_CC"
     CFLAGS="$CFLAGS $FONTCONFIG_CFLAGS"
     LIBS="$LIBS $FONTCONFIG_LIBS"
     AC_DEFINE(CONFIG_FONTCONFIG, 1, [found fontconfig via pkg-config])

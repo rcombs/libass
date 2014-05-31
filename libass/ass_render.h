@@ -30,6 +30,13 @@
 #include "hb.h"
 #endif
 
+#ifdef CONFIG_PTHREAD
+#define MAX_THREADS 16
+#include <pthread.h>
+#else
+#define MAX_THREADS 1
+#endif
+
 // XXX: fix the inclusion mess so we can avoid doing this here
 typedef struct ass_shaper ASS_Shaper;
 
@@ -97,6 +104,9 @@ typedef struct {
     int detect_collisions;
     int shift_direction;
     ASS_Event *event;
+#ifdef CONFIG_PTHREAD
+    int valid;
+#endif
 } EventImages;
 
 typedef enum {
@@ -232,7 +242,6 @@ typedef struct {
     ASS_Event *event;
     ASS_Style *style;
     int parsed_tags;
-    int has_vector_clip;
 
     ASS_Font *font;
     double font_size;
@@ -320,14 +329,30 @@ typedef void (*RestrideBitmapFunc)(uint8_t *dst, intptr_t dst_stride,
                                    uint8_t *src, intptr_t src_stride,
                                    intptr_t width, intptr_t height);
 
+#ifdef CONFIG_PTHREAD
+typedef struct {
+    pthread_t thread;
+    unsigned id;
+    ASS_Renderer *renderer;
+    pthread_mutex_t run_mutex;
+} ASS_ThreadInfo;
+#endif
+
 struct ass_renderer {
     ASS_Library *library;
     FT_Library ftlibrary;
     FCInstance *fontconfig_priv;
     ASS_Settings settings;
     int render_id;
-    ASS_SynthPriv *synth_priv;
-    ASS_Shaper *shaper;
+    ASS_SynthPriv *synth_privs;
+    ASS_Shaper *shapers;
+
+    int has_vector_clip;
+
+#ifdef CONFIG_PTHREAD
+    ASS_ThreadInfo threads[MAX_THREADS];
+    unsigned nb_threads;
+#endif
 
     ASS_Image *images_root;     // rendering result is stored here
     ASS_Image *prev_images_root;
@@ -349,12 +374,12 @@ struct ass_renderer {
     double border_scale;
     double blur_scale;
 
-    RenderContext state;
-    TextInfo text_info;
+    RenderContext states[MAX_THREADS];
+    TextInfo text_infos[MAX_THREADS];
     CacheStore cache;
 
 #if CONFIG_RASTERIZER
-    ASS_Rasterizer rasterizer;
+    ASS_Rasterizer rasterizers[MAX_THREADS];
 #endif
     BitmapBlendFunc add_bitmaps_func;
     BitmapBlendFunc sub_bitmaps_func;
@@ -364,6 +389,14 @@ struct ass_renderer {
 
     FreeList *free_head;
     FreeList *free_tail;
+    
+    unsigned rendering_events;
+    unsigned cur_event;
+    unsigned finished_events;
+    pthread_cond_t start_frame;
+    pthread_cond_t finished_frame;
+    pthread_mutex_t cur_event_mutex;
+    pthread_mutex_t ft_mutex;
 };
 
 typedef struct render_priv {
@@ -383,7 +416,8 @@ typedef struct {
     int ha, hb;                 // left and width
 } Segment;
 
-void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style);
+void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style,
+                          RenderContext *state);
 void ass_free_images(ASS_Image *img);
 
 // XXX: this is actually in ass.c, includes should be fixed later on
