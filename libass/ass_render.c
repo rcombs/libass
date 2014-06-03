@@ -1826,16 +1826,16 @@ static void apply_blur(CombinedBitmapInfo *info, ASS_Renderer *render_priv,
                        ASS_SynthPriv *priv_blur)
 {
     int be = info->be;
-    double blur_radius = info->blur * render_priv->blur_scale * 2;
+    double blur_radius = info->blur * render_priv->blur_scale;
     Bitmap *bm_g = info->bm;
     Bitmap *bm_o = info->bm_o;
     int border_style = info->border_style;
 
     if(blur_radius > 0.0 || be){
         if (bm_o)
-            resize_tmp(priv_blur, bm_o->w, bm_o->h);
+            resize_tmp(priv_blur, bm_o->stride, bm_o->h);
         if (!bm_o || border_style == 3)
-            resize_tmp(priv_blur, bm_g->w, bm_g->h);
+            resize_tmp(priv_blur, bm_g->stride, bm_g->h);
     }
 
     // Apply box blur (multiple passes, if requested)
@@ -1874,8 +1874,15 @@ static void apply_blur(CombinedBitmapInfo *info, ASS_Renderer *render_priv,
     }
 
     // Apply gaussian blur
-    if (blur_radius > 0.0) {
-        generate_tables(priv_blur, blur_radius);
+    if (blur_radius > 2.0) {
+        if (bm_o)
+            ass_box_blur(bm_o->buffer, bm_o->w, bm_o->h, bm_o->stride,
+                         (float*)priv_blur->tmp, blur_radius);
+        if (!bm_o || border_style == 3)
+            ass_box_blur(bm_g->buffer, bm_g->w, bm_g->h, bm_g->stride,
+                         (float*)priv_blur->tmp, blur_radius);
+    } else if (blur_radius > 0.0) {
+        generate_tables(priv_blur, blur_radius * 2);
         if (bm_o)
             ass_gauss_blur(bm_o->buffer, priv_blur->tmp,
                            bm_o->w, bm_o->h, bm_o->stride,

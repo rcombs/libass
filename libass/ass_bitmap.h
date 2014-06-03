@@ -68,6 +68,8 @@ int outline_to_bitmap3(ASS_Renderer *render_priv, FT_Outline *outline, FT_Outlin
                        int border_style, int border_visible, void *rast);
 
 void ass_free_bitmap(Bitmap *bm);
+void ass_box_blur(uint8_t *buf, unsigned width, unsigned height,
+                  unsigned stride, float *m2, float r);
 void ass_gauss_blur(unsigned char *buffer, unsigned *tmp2,
                     int width, int height, int stride,
                     unsigned *m2, int r, int mwidth);

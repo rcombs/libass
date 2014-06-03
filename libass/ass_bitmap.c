@@ -107,7 +107,7 @@ void resize_tmp(ASS_SynthPriv *priv, int w, int h)
         priv->tmp_h *= 2;
     ass_aligned_free(priv->tmp);
     priv->tmp =
-        ass_aligned_alloc(32, (priv->tmp_w + 1) * priv->tmp_h * sizeof(unsigned));
+        ass_aligned_alloc(32, (priv->tmp_w + 1) * priv->tmp_h * sizeof(unsigned) * 2);
 }
 
 ASS_SynthPriv *ass_synth_init(double radius, unsigned count)
@@ -362,6 +362,100 @@ void shift_bitmap(Bitmap *bm, int shift_x, int shift_y)
                 b = (buf[x + (y + 1) * s] * shift_y) >> 6;
                 buf[x + (y + 1) * s] -= b;
                 buf[x + y * s] += b;
+            }
+        }
+    }
+}
+
+void float_box(float *in, float *out,
+               unsigned width, unsigned height,
+               unsigned size, unsigned left, unsigned right)
+{
+    for (unsigned y = 0; y < height; y++) {
+        float sum = 0;
+        float *lineIn = in + y * width;
+        float *lineOut = out + y;
+        for (unsigned i = 0; i < size; i++) {
+            sum += lineIn[i];
+        }
+
+        for (unsigned x = 0; x < width; x++) {
+            lineOut[x * height] = sum / (float)size;
+
+            if (x >= left) {
+                sum -= lineIn[x - left];
+            }
+
+            if (x + right < width) {
+                sum += lineIn[x + right];
+            }
+        }
+    }
+}
+
+static inline uint8_t clamp(float in) {
+    if(in > 255)
+        return 255;
+    else if(in < 0)
+        return 0;
+    return in;
+}
+
+void ass_box_blur(uint8_t *buf, unsigned width, unsigned height,
+                  unsigned stride, float *m2, float r)
+{
+    unsigned d = r * 3.0 * sqrt(2 * M_PI) / 4.0 + 0.5;
+    unsigned size[3], left[3], right[3];
+    if (d & 1) {
+        size[0] = size[1] = size[2] = d;
+        left[0] = left[1] = left[2] = d / 2;
+        right[0] = right[1] = right[2] = d / 2 + 1;
+    } else {
+        size[0] = size[1] = d;
+        size[2] = d + 1;
+        right[0] = right[2] = d - (left[0] = d / 2 - 1);
+        left[1] = left[2] = left[0] + 1;
+    }
+    for (unsigned y = 0; y < height; y++) {
+        register unsigned sum = 0;
+        uint8_t *lineIn = buf + y * stride;
+        float *lineOut = m2 + y;
+        for (unsigned i = 0; i < size[0]; i++) {
+            sum += lineIn[i];
+        }
+        for (unsigned x = 0; x < width; x++) {
+            lineOut[x * height] = (float)sum / (float)size[0];
+
+            if (x >= left[0]) {
+                sum -= lineIn[x - left[0]];
+            }
+
+            if (x + right[0] < width) {
+                sum += lineIn[x + right[0]];
+            }
+        }
+    }
+    float *m3 = m2 + height * stride;
+    float_box(m2, m3, height, width, size[0], left[0], right[0]);
+    float_box(m3, m2, width, height, size[1], left[1], right[1]);
+    float_box(m2, m3, height, width, size[1], left[1], right[1]);
+    float_box(m3, m2, width, height, size[2], left[2], right[2]);
+    for (unsigned y = 0; y < width; y++) {
+        float sum = 0;
+        float *lineIn = m2 + y * height;
+        uint8_t *lineOut = buf + y;
+        for (unsigned i = 0; i < size[2]; i++) {
+            sum += lineIn[i];
+        }
+        for (unsigned x = 0; x < height; x++) {
+            lineOut[x * stride] = clamp(sum / (float)size[2]);
+
+            if (x >= left[2]) {
+                sum -= lineIn[x - left[2]];
+            }
+
+            if (x + right[2] < height) {
+                sum += lineIn[x + right[2]];
             }
         }
     }
