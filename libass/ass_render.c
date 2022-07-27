@@ -1012,7 +1012,7 @@ void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style)
     render_priv->state.treat_family_as_pattern = style->treat_fontname_as_pattern;
     render_priv->state.bold = style->Bold;
     render_priv->state.italic = style->Italic;
-    update_font(render_priv);
+    update_font(&render_priv->state);
 
     render_priv->state.border_style = style->BorderStyle;
     render_priv->state.border_x = style->Outline;
