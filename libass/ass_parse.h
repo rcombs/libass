@@ -32,7 +32,7 @@ void update_font(RenderContext *render_priv);
 double ensure_font_size(ASS_Renderer *priv, double size);
 void apply_transition_effects(RenderContext *render_priv);
 void process_karaoke_effects(ASS_Renderer *render_priv);
-unsigned get_next_char(ASS_Renderer *render_priv, char **str);
+unsigned get_next_char(RenderContext *state, char **str);
 char *parse_tags(ASS_Renderer *render_priv, char *p, char *end, double pwr,
                  bool nested);
 int event_has_hard_overrides(char *str);
