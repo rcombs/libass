@@ -2109,14 +2109,15 @@ static void preliminary_layout(ASS_Renderer *render_priv)
 }
 
 // Reorder text into visual order
-static void reorder_text(ASS_Renderer *render_priv)
+static void reorder_text(RenderContext *state)
 {
-    TextInfo *text_info = &render_priv->text_info;
+    ASS_Renderer *render_priv = state->renderer;
+    TextInfo *text_info = state->text_info;
     FriBidiStrIndex *cmap = ass_shaper_reorder(render_priv->shaper, text_info);
     if (!cmap) {
         ass_msg(render_priv->library, MSGL_ERR, "Failed to reorder text");
         ass_shaper_cleanup(render_priv->shaper, text_info);
-        free_render_context(&render_priv->state);
+        free_render_context(state);
         return;
     }
 
@@ -2706,7 +2707,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
     // depends on glyph x coordinates being monotonous within runs, so it should be done before reorder
     process_karaoke_effects(state);
 
-    reorder_text(render_priv);
+    reorder_text(state);
 
     align_lines(state, max_text_width);
 
