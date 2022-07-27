@@ -28,6 +28,10 @@
 #include FT_SYNTHESIS_H
 #include <hb.h>
 
+#if CONFIG_PTHREAD
+#include <pthread.h>
+#endif
+
 #include "ass.h"
 #include "ass_font.h"
 #include "ass_bitmap.h"
@@ -332,6 +336,21 @@ struct ass_renderer {
     const BitmapEngine *engine;
 
     ASS_Style user_override_style;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_t mutex;
+    int mutex_inited;
+    pthread_cond_t main_cond, pool_cond;
+    int main_cond_inited, pool_cond_inited;
+
+    unsigned n_threads, started_threads;
+    pthread_t *threads;
+
+    int thread_start_failed;
+
+    int shutting_down;
+    int processing_eimgs, sent_eimgs, next_eimg, got_eimgs;
+#endif
 };
 
 typedef struct render_priv {
