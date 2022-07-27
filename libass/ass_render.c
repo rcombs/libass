@@ -963,29 +963,30 @@ static ASS_Style *handle_selective_style_overrides(RenderContext *state,
     return new;
 }
 
-static void init_font_scale(ASS_Renderer *render_priv)
+static void init_font_scale(RenderContext *state)
 {
+    ASS_Renderer *render_priv = state->renderer;
     ASS_Settings *settings_priv = &render_priv->settings;
 
     double font_scr_h = render_priv->orig_height;
-    if (!render_priv->state.explicit && render_priv->settings.use_margins)
+    if (!state->explicit && render_priv->settings.use_margins)
         font_scr_h = render_priv->fit_height;
 
-    render_priv->state.font_scale = font_scr_h / render_priv->track->PlayResY;
+    state->font_scale = font_scr_h / render_priv->track->PlayResY;
     if (settings_priv->storage_height)
-        render_priv->state.blur_scale = font_scr_h / settings_priv->storage_height;
+        state->blur_scale = font_scr_h / settings_priv->storage_height;
     else
-        render_priv->state.blur_scale = font_scr_h / render_priv->track->PlayResY;
+        state->blur_scale = font_scr_h / render_priv->track->PlayResY;
     if (render_priv->track->ScaledBorderAndShadow)
-        render_priv->state.border_scale =
+        state->border_scale =
             font_scr_h / render_priv->track->PlayResY;
     else
-        render_priv->state.border_scale = render_priv->state.blur_scale;
+        state->border_scale = state->blur_scale;
 
-    if (render_priv->state.apply_font_scale) {
-        render_priv->state.font_scale *= settings_priv->font_size_coeff;
-        render_priv->state.border_scale *= settings_priv->font_size_coeff;
-        render_priv->state.blur_scale *= settings_priv->font_size_coeff;
+    if (state->apply_font_scale) {
+        state->font_scale *= settings_priv->font_size_coeff;
+        state->border_scale *= settings_priv->font_size_coeff;
+        state->blur_scale *= settings_priv->font_size_coeff;
     }
 }
 
@@ -997,7 +998,7 @@ void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style)
 {
     style = handle_selective_style_overrides(&render_priv->state, style);
 
-    init_font_scale(render_priv);
+    init_font_scale(&render_priv->state);
 
     render_priv->state.c[0] = style->PrimaryColour;
     render_priv->state.c[1] = style->SecondaryColour;
