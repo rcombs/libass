@@ -10,7 +10,7 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 
 # Checks for header files.
-AC_CHECK_HEADERS_ONCE([iconv.h])
+AC_CHECK_HEADERS_ONCE([iconv.h stdatomic.h])
 
 # Checks for library functions.
 AC_CHECK_FUNCS([strdup strndup])
@@ -34,6 +34,8 @@ AC_ARG_ENABLE([require-system-font-provider], AS_HELP_STRING([--disable-require-
     [allow compilation even if no system font provider was found @<:@default=enabled:>@]))
 AC_ARG_ENABLE([asm], AS_HELP_STRING([--disable-asm],
     [disable compiling with ASM @<:@default=check@:>@]))
+AC_ARG_ENABLE([threads], AS_HELP_STRING([--disable-threads],
+    [disable threading support @<:@default=check@:>@]))
 AC_ARG_ENABLE([large-tiles], AS_HELP_STRING([--enable-large-tiles],
     [use larger tiles in the rasterizer (better performance, slightly worse quality) @<:@default=disabled@:>@]))
 
@@ -101,6 +103,24 @@ AS_IF([test "x$enable_test" = xyes || test "x$enable_compare" = xyes], [
         CFLAGS="$CFLAGS $LIBPNG_CFLAGS"
         AC_DEFINE(CONFIG_LIBPNG, 1, [found libpng via pkg-config])
         libpng=true
+    ])
+])
+
+AS_IF([test "x$enable_threads" = xyes && test "x$ac_cv_header_stdatomic_h" != xyes], [
+    AC_MSG_ERROR([threading support was requested, but <stdatomic.h> was not found.])
+])
+
+AS_IF([test "x$enable_threads" != xno && test "x$ac_cv_header_stdatomic_h" = xyes], [
+    AX_PTHREAD([
+        pkg_libs="$pkg_libs $PTHREAD_LIBS"
+        CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
+        LIBS="$LIBS $PTHREAD_LIBS"
+        CC="$PTHREAD_CC"
+        AC_DEFINE(CONFIG_PTHREAD, 1, [Have POSIX threads])
+    ], [
+        AS_IF([test "x$enable_threads" = xyes], [
+            AC_MSG_ERROR([threading support was requested, but pthread support was not found.])
+        ])
     ])
 ])
 
