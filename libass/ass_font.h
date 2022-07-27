@@ -31,6 +31,10 @@ typedef struct ass_font ASS_Font;
 #include "ass_cache.h"
 #include "ass_outline.h"
 
+#if CONFIG_PTHREAD
+#include <stdatomic.h>
+#endif
+
 #define VERTICAL_LOWER_BOUND 0x02f1
 
 #define ASS_FONT_MAX_FACES 10
@@ -45,7 +49,12 @@ struct ass_font {
     int faces_uid[ASS_FONT_MAX_FACES];
     FT_Face faces[ASS_FONT_MAX_FACES];
     ASS_ShaperFontData *shaper_priv;
+
+#if CONFIG_PTHREAD
+    atomic_int n_faces;
+#else
     int n_faces;
+#endif
     double size;
 };
 
