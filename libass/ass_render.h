@@ -204,10 +204,11 @@ typedef struct {
 
 // Renderer state.
 // Values like current font face, color, screen position, clipping and so on are stored here.
-typedef struct {
+struct render_context {
     ASS_Renderer *renderer;
     TextInfo *text_info;
     ASS_Shaper *shaper;
+    RasterizerData rasterizer;
 
     ASS_Event *event;
     ASS_Style *style;
@@ -285,7 +286,9 @@ typedef struct {
     double font_scale;
     double border_scale;
     double blur_scale;
-} RenderContext;
+};
+
+typedef struct render_context RenderContext;
 
 typedef struct {
     Cache *font_cache;
@@ -327,7 +330,6 @@ struct ass_renderer {
     CacheStore cache;
 
     const BitmapEngine *engine;
-    RasterizerData rasterizer;
 
     ASS_Style user_override_style;
 };
