@@ -111,6 +111,9 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
     if (!priv->text_info.combined_bitmaps || !priv->text_info.glyphs || !priv->text_info.lines)
         goto fail;
 
+    priv->state.renderer = priv;
+    priv->state.text_info = &priv->text_info;
+
     priv->settings.font_size_coeff = 1.;
     priv->settings.selective_style_overrides = ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
 
@@ -1047,8 +1050,6 @@ void reset_render_context(RenderContext *state, ASS_Style *style)
 static void
 init_render_context(ASS_Renderer *render_priv, ASS_Event *event)
 {
-    render_priv->state.renderer = render_priv;
-    render_priv->state.text_info = &render_priv->text_info;
     render_priv->state.event = event;
     render_priv->state.parsed_tags = 0;
     render_priv->state.evt_type = EVENT_NORMAL;
