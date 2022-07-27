@@ -126,7 +126,6 @@ static bool check_allocations(ASS_Shaper *shaper, size_t new_size, size_t n_pars
  */
 void ass_shaper_free(ASS_Shaper *shaper)
 {
-    ass_cache_done(shaper->metrics_cache);
     free(shaper->features);
     free(shaper->event_text);
     free(shaper->ctypes);
@@ -137,11 +136,6 @@ void ass_shaper_free(ASS_Shaper *shaper)
     free(shaper->cmap);
     free(shaper->pbase_dir);
     free(shaper);
-}
-
-void ass_shaper_empty_cache(ASS_Shaper *shaper)
-{
-    ass_cache_empty(shaper->metrics_cache);
 }
 
 void ass_shaper_font_data_free(ASS_ShaperFontData *priv)
@@ -1037,8 +1031,10 @@ bool ass_shaper_shape(ASS_Shaper *shaper, TextInfo *text_info)
 /**
  * \brief Create a new shaper instance
  */
-ASS_Shaper *ass_shaper_new(void)
+ASS_Shaper *ass_shaper_new(Cache *metrics_cache)
 {
+    assert(metrics_cache);
+
     ASS_Shaper *shaper = calloc(sizeof(*shaper), 1);
     if (!shaper)
         return NULL;
@@ -1047,9 +1043,7 @@ ASS_Shaper *ass_shaper_new(void)
 
     if (!init_features(shaper))
         goto error;
-    shaper->metrics_cache = ass_glyph_metrics_cache_create();
-    if (!shaper->metrics_cache)
-        goto error;
+    shaper->metrics_cache = metrics_cache;
 
     return shaper;
 
