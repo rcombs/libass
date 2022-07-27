@@ -762,10 +762,10 @@ char *parse_tags(ASS_Renderer *render_priv, char *p, char *end, double pwr,
         } else if (tag("r")) {
             if (nargs) {
                 int len = args->end - args->start;
-                reset_render_context(render_priv,
+                reset_render_context(state,
                         lookup_style_strict(render_priv->track, args->start, len));
             } else
-                reset_render_context(render_priv, NULL);
+                reset_render_context(state, NULL);
         } else if (tag("be")) {
             double dval;
             if (nargs) {
