@@ -487,8 +487,19 @@ size_t ass_font_construct(void *key, void *value, void *priv)
 
     font->size = 0.;
 
-    int error = add_face(render_priv->fontselect, font, 0);
-    if (error == -1)
+    int ret = add_face(render_priv->fontselect, font, 0);
+    if (ret < 0)
+        goto fail;
+
+#if CONFIG_PTHREAD
+    if (pthread_mutex_init(&font->mutex, NULL) != 0) {
+        ret = -1;
+        goto fail;
+    }
+#endif
+
+fail:
+    if (ret < 0)
         font->library = NULL;
     return 1;
 }
@@ -687,6 +698,24 @@ void ass_font_clear(ASS_Font *font)
             FT_Done_Face(font->faces[i]);
     }
     free((char *) font->desc.family.str);
+
+#if CONFIG_PTHREAD
+    pthread_mutex_destroy(&font->mutex);
+#endif
+}
+
+void ass_font_lock(ASS_Font *font)
+{
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&font->mutex);
+#endif
+}
+
+void ass_font_unlock(ASS_Font *font)
+{
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&font->mutex);
+#endif
 }
 
 /**

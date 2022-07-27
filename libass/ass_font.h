@@ -32,6 +32,7 @@ typedef struct ass_font ASS_Font;
 #include "ass_outline.h"
 
 #if CONFIG_PTHREAD
+#include <pthread.h>
 #include <stdatomic.h>
 #endif
 
@@ -51,6 +52,7 @@ struct ass_font {
     ASS_ShaperFontData *shaper_priv;
 
 #if CONFIG_PTHREAD
+    pthread_mutex_t mutex;
     atomic_int n_faces;
 #else
     int n_faces;
@@ -71,6 +73,9 @@ uint32_t ass_font_index_magic(FT_Face face, uint32_t symbol);
 bool ass_font_get_glyph(ASS_Font *font, int face_index, int index,
                         ASS_Hinting hinting);
 void ass_font_clear(ASS_Font *font);
+
+void ass_font_lock(ASS_Font *font);
+void ass_font_unlock(ASS_Font *font);
 
 bool ass_get_glyph_outline(ASS_Outline *outline, int32_t *advance,
                            FT_Face face, unsigned flags);
