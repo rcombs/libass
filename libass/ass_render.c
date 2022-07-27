@@ -1933,7 +1933,7 @@ static bool parse_events(ASS_Renderer *render_priv, ASS_Event *event)
         unsigned code = 0;
         while (*p) {
             if ((*p == '{') && (q = strchr(p, '}'))) {
-                p = parse_tags(render_priv, p, q, 1., false);
+                p = parse_tags(state, p, q, 1., false);
                 assert(*p == '}');
                 p++;
             } else if (render_priv->state.drawing_scale) {
