@@ -25,6 +25,11 @@
 #include FT_OUTLINE_H
 #include <assert.h>
 
+#if CONFIG_PTHREAD
+#include <stdatomic.h>
+#include <pthread.h>
+#endif
+
 #include "ass_utils.h"
 #include "ass_font.h"
 #include "ass_outline.h"
@@ -302,7 +307,12 @@ typedef struct cache_item {
     const CacheDesc *desc;
     struct cache_item *next, **prev;
     struct cache_item *queue_next, **queue_prev;
-    size_t size, ref_count;
+    size_t size;
+#if CONFIG_PTHREAD
+    atomic_size_t ref_count;
+#else
+    size_t ref_count;
+#endif
 } CacheItem;
 
 struct cache {
@@ -316,6 +326,11 @@ struct cache {
     unsigned hits;
     unsigned misses;
     unsigned items;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+#endif
 };
 
 #define CACHE_ALIGN 8
@@ -343,11 +358,39 @@ Cache *ass_cache_create(const CacheDesc *desc)
     cache->desc = desc;
     cache->map = calloc(cache->buckets, sizeof(CacheItem *));
     if (!cache->map) {
-        free(cache);
-        return NULL;
+        goto fail;
     }
 
+#if CONFIG_PTHREAD
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr) != 0)
+        goto fail;
+
+    if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE) != 0)
+        goto faila;
+
+    if (pthread_mutex_init(&cache->mutex, &attr) != 0)
+        goto faila;
+
+    if (pthread_cond_init(&cache->cond, NULL) != 0)
+        goto failm;
+
+    pthread_mutexattr_destroy(&attr);
+#endif
+
     return cache;
+
+#if CONFIG_PTHREAD
+failm:
+    pthread_mutex_destroy(&cache->mutex);
+faila:
+    pthread_mutexattr_destroy(&attr);
+#endif
+
+fail:
+    free(cache->map);
+    free(cache);
+    return NULL;
 }
 
 void *ass_cache_get(Cache *cache, void *key, void *priv)
@@ -355,10 +398,14 @@ void *ass_cache_get(Cache *cache, void *key, void *priv)
     const CacheDesc *desc = cache->desc;
     size_t key_offs = CACHE_ITEM_SIZE + align_cache(desc->value_size);
     unsigned bucket = desc->hash_func(key, ASS_HASH_INIT) % cache->buckets;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
     CacheItem *item = cache->map[bucket];
     while (item) {
         if (desc->compare_func(key, (char *) item + key_offs)) {
-            assert(item->size);
             if (!item->queue_prev || item->queue_next) {
                 if (item->queue_prev) {
                     item->queue_next->queue_prev = item->queue_prev;
@@ -373,6 +420,14 @@ void *ass_cache_get(Cache *cache, void *key, void *priv)
             cache->hits++;
             desc->key_move_func(NULL, key);
             item->ref_count++;
+
+#if CONFIG_PTHREAD
+            while (!item->size)
+                pthread_cond_wait(&cache->cond, &cache->mutex);
+
+            pthread_mutex_unlock(&cache->mutex);
+#endif
+
             return (char *) item + CACHE_ITEM_SIZE;
         }
         item = item->next;
@@ -382,18 +437,23 @@ void *ass_cache_get(Cache *cache, void *key, void *priv)
     item = malloc(key_offs + desc->key_size);
     if (!item) {
         desc->key_move_func(NULL, key);
+#if CONFIG_PTHREAD
+        pthread_mutex_unlock(&cache->mutex);
+#endif
         return NULL;
     }
-    item->cache = cache;
-    item->desc = desc;
     void *new_key = (char *) item + key_offs;
     if (!desc->key_move_func(new_key, key)) {
         free(item);
+#if CONFIG_PTHREAD
+        pthread_mutex_unlock(&cache->mutex);
+#endif
         return NULL;
     }
-    void *value = (char *) item + CACHE_ITEM_SIZE;
-    item->size = desc->construct_func(new_key, value, priv);
-    assert(item->size);
+
+    item->cache = cache;
+    item->desc = desc;
+    item->size = 0;
 
     CacheItem **bucketptr = &cache->map[bucket];
     if (*bucketptr)
@@ -408,8 +468,29 @@ void *ass_cache_get(Cache *cache, void *key, void *priv)
     item->queue_next = NULL;
     item->ref_count = 2;
 
-    cache->cache_size += item->size;
     cache->items++;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&cache->mutex);
+#endif
+
+    void *value = (char *) item + CACHE_ITEM_SIZE;
+    size_t size = desc->construct_func(new_key, value, priv);
+    assert(size);
+
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
+    item->size = size;
+
+    cache->cache_size += size;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&cache->mutex);
+    pthread_cond_broadcast(&cache->cond);
+#endif
+
     return value;
 }
 
@@ -436,6 +517,24 @@ void ass_cache_inc_ref(void *value)
     item->ref_count++;
 }
 
+static void cache_unlock_maybe_free(Cache *cache)
+{
+    bool destroy = !cache->items && !cache->map;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&cache->mutex);
+#endif
+
+    if (destroy) {
+#if CONFIG_PTHREAD
+        pthread_mutex_destroy(&cache->mutex);
+        pthread_cond_destroy(&cache->cond);
+#endif
+
+        free(cache);
+    }
+}
+
 void ass_cache_dec_ref(void *value)
 {
     if (!value)
@@ -446,21 +545,35 @@ void ass_cache_dec_ref(void *value)
         return;
 
     Cache *cache = item->cache;
-    if (cache) {
-        if (item->next)
-            item->next->prev = item->prev;
-        *item->prev = item->next;
 
-        cache->items--;
-        cache->cache_size -= item->size;
-    }
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
+    if (item->next)
+        item->next->prev = item->prev;
+    *item->prev = item->next;
+
+    cache->cache_size -= item->size;
+    cache->items--;
+
+    cache_unlock_maybe_free(cache);
+
     destroy_item(item->desc, item);
 }
 
 void ass_cache_cut(Cache *cache, size_t max_size)
 {
-    if (cache->cache_size <= max_size)
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
+    if (cache->cache_size <= max_size) {
+#if CONFIG_PTHREAD
+        pthread_mutex_unlock(&cache->mutex);
+#endif
         return;
+    }
 
     do {
         CacheItem *item = cache->queue_first;
@@ -486,11 +599,19 @@ void ass_cache_cut(Cache *cache, size_t max_size)
         cache->queue_first->queue_prev = &cache->queue_first;
     else
         cache->queue_last = &cache->queue_first;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&cache->mutex);
+#endif
 }
 
 void ass_cache_stats(Cache *cache, size_t *size, unsigned *hits,
                      unsigned *misses, unsigned *count)
 {
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
     if (size)
         *size = cache->cache_size;
     if (hits)
@@ -499,21 +620,35 @@ void ass_cache_stats(Cache *cache, size_t *size, unsigned *hits,
         *misses = cache->misses;
     if (count)
         *count = cache->items;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&cache->mutex);
+#endif
 }
 
 void ass_cache_empty(Cache *cache)
 {
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
     for (int i = 0; i < cache->buckets; i++) {
         CacheItem *item = cache->map[i];
         while (item) {
             assert(item->size);
             CacheItem *next = item->next;
+
             if (item->queue_prev)
                 item->ref_count--;
-            if (item->ref_count)
-                item->cache = NULL;
-            else
+
+            if (!item->ref_count) {
+                if (item->next)
+                    item->next->prev = item->prev;
+                *item->prev = item->next;
+
                 destroy_item(cache->desc, item);
+                cache->items--;
+            }
             item = next;
         }
         cache->map[i] = NULL;
@@ -521,14 +656,25 @@ void ass_cache_empty(Cache *cache)
 
     cache->queue_first = NULL;
     cache->queue_last = &cache->queue_first;
-    cache->items = cache->hits = cache->misses = cache->cache_size = 0;
+    cache->hits = cache->misses = cache->cache_size = 0;
+
+#if CONFIG_PTHREAD
+    pthread_mutex_unlock(&cache->mutex);
+#endif
 }
 
 void ass_cache_done(Cache *cache)
 {
     ass_cache_empty(cache);
+
+#if CONFIG_PTHREAD
+    pthread_mutex_lock(&cache->mutex);
+#endif
+
     free(cache->map);
-    free(cache);
+    cache->map = NULL;
+
+    cache_unlock_maybe_free(cache);
 }
 
 // Type-specific creation function
