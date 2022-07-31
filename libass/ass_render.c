@@ -71,6 +71,9 @@ static void text_info_done(TextInfo* text_info)
 #if CONFIG_PTHREAD
 unsigned default_threads(void)
 {
+    if (getenv("LIBASS_NO_THREADS"))
+        return 1;
+
 #ifdef _SC_NPROCESSORS_ONLN
     long sc = sysconf(_SC_NPROCESSORS_ONLN);
     if (sc < 0)
