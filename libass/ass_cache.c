@@ -97,18 +97,23 @@ const CacheDesc font_cache_desc = {
 static bool bitmap_key_move(void *dst, void *src)
 {
     BitmapHashKey *d = dst, *s = src;
-    if (d)
+    if (d) {
         *d = *s;
-    else
-        ass_cache_dec_ref(s->outline);
+        ass_cache_inc_ref(d->outline);
+    }
     return true;
+}
+
+static void bitmap_key_destruct(void *key)
+{
+    BitmapHashKey *k = key;
+    ass_cache_dec_ref(k->outline);
 }
 
 static void bitmap_destruct(void *key, void *value)
 {
-    BitmapHashKey *k = key;
+    bitmap_key_destruct(key);
     ass_free_bitmap(value);
-    ass_cache_dec_ref(k->outline);
 }
 
 size_t ass_bitmap_construct(void *key, void *value, void *priv);
@@ -117,6 +122,7 @@ const CacheDesc bitmap_cache_desc = {
     .hash_func = bitmap_hash,
     .compare_func = bitmap_compare,
     .key_move_func = bitmap_key_move,
+    .key_destruct_func = bitmap_key_destruct,
     .construct_func = ass_bitmap_construct,
     .destruct_func = bitmap_destruct,
     .key_size = sizeof(BitmapHashKey),
@@ -153,29 +159,34 @@ static bool composite_key_move(void *dst, void *src)
     CompositeHashKey *d = dst, *s = src;
     if (d) {
         *d = *s;
+        for (size_t i = 0; i < d->bitmap_count; i++) {
+            ass_cache_inc_ref(d->bitmaps[i].bm);
+            ass_cache_inc_ref(d->bitmaps[i].bm_o);
+        }
         return true;
     }
 
-    for (size_t i = 0; i < s->bitmap_count; i++) {
-        ass_cache_dec_ref(s->bitmaps[i].bm);
-        ass_cache_dec_ref(s->bitmaps[i].bm_o);
-    }
     free(s->bitmaps);
     return true;
 }
 
-static void composite_destruct(void *key, void *value)
+static void composite_key_destruct(void *key)
 {
-    CompositeHashValue *v = value;
     CompositeHashKey *k = key;
-    ass_free_bitmap(&v->bm);
-    ass_free_bitmap(&v->bm_o);
-    ass_free_bitmap(&v->bm_s);
     for (size_t i = 0; i < k->bitmap_count; i++) {
         ass_cache_dec_ref(k->bitmaps[i].bm);
         ass_cache_dec_ref(k->bitmaps[i].bm_o);
     }
     free(k->bitmaps);
+}
+
+static void composite_destruct(void *key, void *value)
+{
+    CompositeHashValue *v = value;
+    ass_free_bitmap(&v->bm);
+    ass_free_bitmap(&v->bm_o);
+    ass_free_bitmap(&v->bm_s);
+    composite_key_destruct(key);
 }
 
 size_t ass_composite_construct(void *key, void *value, void *priv);
@@ -230,8 +241,6 @@ static bool outline_key_move(void *dst, void *src)
 {
     OutlineHashKey *d = dst, *s = src;
     if (!d) {
-        if (s->type == OUTLINE_GLYPH)
-            ass_cache_dec_ref(s->u.glyph.font);
         return true;
     }
 
@@ -242,6 +251,8 @@ static bool outline_key_move(void *dst, void *src)
     }
     if (s->type == OUTLINE_BORDER)
         ass_cache_inc_ref(s->u.border.outline);
+    else if (s->type == OUTLINE_GLYPH)
+        ass_cache_inc_ref(s->u.glyph.font);
     return true;
 }
 
@@ -419,8 +430,6 @@ retry:
         else
             desc->key_move_func(NULL, key);
 
-        inc_ref(&item->ref_count);
-
 #if ENABLE_THREADS
         if (!atomic_load_explicit(&item->size, memory_order_acquire)) {
             pthread_mutex_lock(&item->mutex);
@@ -463,7 +472,7 @@ retry:
         }
 
 #if ENABLE_THREADS
-         if (pthread_cond_init(&new_item->cond, NULL) != 0)
+        if (pthread_cond_init(&new_item->cond, NULL) != 0)
             goto fail_move;
 
         if (pthread_mutex_init(&new_item->mutex, NULL) != 0) {
@@ -478,7 +487,7 @@ retry:
         new_item->size = 0;
         new_item->hash = hash;
         new_item->last_used_frame = cache->cur_frame;
-        new_item->ref_count = 2;
+        new_item->ref_count = 1;
         new_item->queue_next = NULL;
         new_item->queue_prev = NULL;
     }
@@ -528,6 +537,7 @@ void *ass_cache_key(void *value)
 static inline void destroy_item(const CacheDesc *desc, CacheItem *item)
 {
     assert(item->desc == desc);
+    assert(!item->next && !item->prev);
     char *value = (char *) item + CACHE_ITEM_SIZE;
     desc->destruct_func(value + align_cache(desc->value_size), value);
 #if ENABLE_THREADS
