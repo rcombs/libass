@@ -63,7 +63,7 @@ struct ass_shaper {
     hb_language_t language;
 
     // Glyph and face-size metrics caches, to speed up shaping
-    Cache *face_size_metrics_cache;
+    Cache *sized_shaper_font_cache;
     Cache *metrics_cache;
 
     hb_font_funcs_t *font_funcs;
@@ -79,7 +79,7 @@ struct ass_shaper {
 
 struct ass_shaper_metrics_data {
     Cache *metrics_cache;
-    FaceSizeMetricsHashKey hash_key;
+    SizedShaperFontHashKey hash_key;
 };
 
 /**
@@ -235,20 +235,39 @@ get_cached_metrics(struct ass_shaper_metrics_data *metrics,
     return NULL;
 }
 
-size_t ass_face_size_metrics_construct(void *key, void *value, void *priv)
+size_t ass_sized_shaper_font_construct(void *key, void *value, void *priv)
 {
-    FaceSizeMetricsHashKey *k = key;
-    FT_Size_Metrics *v = value;
+    ASS_Shaper *shaper = priv;
+    SizedShaperFontHashKey *k = key;
+    hb_font_t **v = value;
+    *v = NULL;
 
-    ass_font_lock(k->font);
+    // set up cached metrics access
+    struct ass_shaper_metrics_data *metrics = calloc(sizeof(struct ass_shaper_metrics_data), 1);
+    if (!metrics)
+        return 1;
+
+    metrics->metrics_cache = shaper->metrics_cache;
+    memcpy(&metrics->hash_key, k, sizeof(*k));
+
+    hb_font_t *hb_font = hb_font_create_sub_font(k->font->hb_fonts[k->face_index]);
+    if (!hb_font) {
+        free(metrics);
+        return 1;
+    }
+
+    hb_font_set_funcs(hb_font, shaper->font_funcs, metrics, free);
 
     FT_Face face = k->font->faces[k->face_index];
 
-    ass_face_set_size(face, k->size);
+    ass_font_lock(k->font);
 
-    memcpy(v, &face->size->metrics, sizeof(FT_Size_Metrics));
+    ass_face_set_size(face, k->size);
+    update_hb_size(hb_font, face, &face->size->metrics);
 
     ass_font_unlock(k->font);
+
+    *v = hb_font;
 
     return 1;
 }
@@ -513,40 +532,16 @@ bool ass_create_hb_font(ASS_Font *font, int index)
  */
 static hb_font_t *get_hb_font(ASS_Shaper *shaper, GlyphInfo *info)
 {
-    ASS_Font *font = info->font;
-    hb_font_t *hb_font = NULL;
-
-    FaceSizeMetricsHashKey key = {
+    SizedShaperFontHashKey key = {
         .font = info->font,
         .face_index = info->face_index,
         .size = info->font_size,
     };
-    FT_Size_Metrics *m = ass_cache_get(shaper->face_size_metrics_cache, &key, NULL);
-    if (!m)
-        goto fail;
+    hb_font_t **cached = ass_cache_get(shaper->sized_shaper_font_cache, &key, shaper);
+    if (cached)
+        return *cached;
 
-    hb_font = hb_font_create_sub_font(font->hb_fonts[info->face_index]);
-    if (!hb_font)
-        goto fail;
-
-    // set up cached metrics access
-    struct ass_shaper_metrics_data *metrics = calloc(sizeof(struct ass_shaper_metrics_data), 1);
-    if (!metrics) {
-        hb_font_destroy(hb_font);
-        hb_font = NULL;
-        goto fail;
-    }
-    metrics->metrics_cache = shaper->metrics_cache;
-    metrics->hash_key.font = info->font;
-    metrics->hash_key.face_index = info->face_index;
-    metrics->hash_key.size = info->font_size;
-
-    hb_font_set_funcs(hb_font, shaper->font_funcs, metrics, free);
-
-    update_hb_size(hb_font, font->faces[info->face_index], m);
-
-fail:
-    return hb_font;
+    return NULL;
 }
 
 /**
@@ -771,8 +766,6 @@ static bool shape_harfbuzz(ASS_Shaper *shaper, GlyphInfo *glyphs, size_t len)
         shape_harfbuzz_process_run(glyphs, buf,
                 shaper->whole_text_layout ? 0 : offset - lead_context);
         hb_buffer_reset(buf);
-
-        hb_font_destroy(font);
     }
 
     return true;
@@ -1071,7 +1064,7 @@ bool ass_shaper_shape(ASS_Shaper *shaper, TextInfo *text_info)
 /**
  * \brief Create a new shaper instance
  */
-ASS_Shaper *ass_shaper_new(Cache *metrics_cache, Cache *face_size_metrics_cache)
+ASS_Shaper *ass_shaper_new(Cache *metrics_cache, Cache *sized_shaper_font_cache)
 {
     assert(metrics_cache);
 
@@ -1083,7 +1076,7 @@ ASS_Shaper *ass_shaper_new(Cache *metrics_cache, Cache *face_size_metrics_cache)
 
     if (!init_features(shaper))
         goto error;
-    shaper->face_size_metrics_cache = face_size_metrics_cache;
+    shaper->sized_shaper_font_cache = sized_shaper_font_cache;
     shaper->metrics_cache = metrics_cache;
 
     hb_font_funcs_t *funcs = shaper->font_funcs = hb_font_funcs_create();

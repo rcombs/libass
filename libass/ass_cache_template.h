@@ -67,11 +67,11 @@ START(bitmap, bitmap_hash_key)
     VECTOR(matrix_z)
 END(BitmapHashKey)
 
-START(face_size_metrics, face_size_metrics_hash_key)
+START(sized_shaper_font, sized_shaper_font_hash_key)
     GENERIC(ASS_Font *, font)
     GENERIC(double, size)
     GENERIC(int, face_index)
-END(FaceSizeMetricsHashKey)
+END(SizedShaperFontHashKey)
 
 START(glyph_metrics, glyph_metrics_hash_key)
     GENERIC(ASS_Font *, font)

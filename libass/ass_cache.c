@@ -34,6 +34,7 @@
 #include "ass_utils.h"
 #include "ass_font.h"
 #include "ass_outline.h"
+#include "ass_shaper.h"
 #include "ass_cache.h"
 #include "ass_threading.h"
 
@@ -297,9 +298,9 @@ const CacheDesc outline_cache_desc = {
 
 
 // font-face size metric cache
-static bool face_size_metrics_key_move(void *dst, void *src)
+static bool sized_shaper_font_key_move(void *dst, void *src)
 {
-    FaceSizeMetricsHashKey *d = dst, *s = src;
+    SizedShaperFontHashKey *d = dst, *s = src;
     if (!d)
         return true;
 
@@ -308,28 +309,29 @@ static bool face_size_metrics_key_move(void *dst, void *src)
     return true;
 }
 
-static void face_size_metrics_key_destruct(void *key)
+static void sized_shaper_font_key_destruct(void *key)
 {
-    FaceSizeMetricsHashKey *k = key;
+    SizedShaperFontHashKey *k = key;
     ass_cache_dec_ref(k->font);
 }
 
-static void face_size_metrics_destruct(void *key, void *value)
+static void sized_shaper_font_destruct(void *key, void *value)
 {
-    face_size_metrics_key_destruct(key);
+    sized_shaper_font_key_destruct(key);
+    hb_font_destroy(*(hb_font_t**)value);
 }
 
-size_t ass_face_size_metrics_construct(void *key, void *value, void *priv);
+size_t ass_sized_shaper_font_construct(void *key, void *value, void *priv);
 
-const CacheDesc face_size_metrics_cache_desc = {
-    .hash_func = face_size_metrics_hash,
-    .compare_func = face_size_metrics_compare,
-    .key_move_func = face_size_metrics_key_move,
-    .key_destruct_func = face_size_metrics_key_destruct,
-    .construct_func = ass_face_size_metrics_construct,
-    .destruct_func = face_size_metrics_destruct,
-    .key_size = sizeof(FaceSizeMetricsHashKey),
-    .value_size = sizeof(FT_Size_Metrics)
+const CacheDesc sized_shaper_font_cache_desc = {
+    .hash_func = sized_shaper_font_hash,
+    .compare_func = sized_shaper_font_compare,
+    .key_move_func = sized_shaper_font_key_move,
+    .key_destruct_func = sized_shaper_font_key_destruct,
+    .construct_func = ass_sized_shaper_font_construct,
+    .destruct_func = sized_shaper_font_destruct,
+    .key_size = sizeof(SizedShaperFontHashKey),
+    .value_size = sizeof(hb_font_t*)
 };
 
 
@@ -715,9 +717,9 @@ Cache *ass_glyph_metrics_cache_create(void)
     return ass_cache_create(&glyph_metrics_cache_desc);
 }
 
-Cache *ass_face_size_metrics_cache_create(void)
+Cache *ass_sized_shaper_font_cache_create(void)
 {
-    return ass_cache_create(&face_size_metrics_cache_desc);
+    return ass_cache_create(&sized_shaper_font_cache_desc);
 }
 
 Cache *ass_bitmap_cache_create(void)
