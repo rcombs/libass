@@ -31,7 +31,7 @@ typedef struct ass_shaper ASS_Shaper;
 #endif
 
 void ass_shaper_info(ASS_Library *lib);
-ASS_Shaper *ass_shaper_new(Cache *metrics_cache, Cache *sized_shaper_font_cache);
+ASS_Shaper *ass_shaper_new(CacheClient *metrics_cache, CacheClient *sized_shaper_font_cache);
 void ass_shaper_free(ASS_Shaper *shaper);
 bool ass_create_hb_font(ASS_Font *font, int index);
 void ass_shaper_set_kerning(ASS_Shaper *shaper, bool kern);

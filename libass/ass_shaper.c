@@ -63,8 +63,8 @@ struct ass_shaper {
     hb_language_t language;
 
     // Glyph and face-size metrics caches, to speed up shaping
-    Cache *sized_shaper_font_cache;
-    Cache *metrics_cache;
+    CacheClient *sized_shaper_font_cache;
+    CacheClient *metrics_cache;
 
     hb_font_funcs_t *font_funcs;
     hb_buffer_t *buf;
@@ -78,7 +78,7 @@ struct ass_shaper {
 };
 
 struct ass_shaper_metrics_data {
-    Cache *metrics_cache;
+    CacheClient *metrics_cache;
     SizedShaperFontHashKey hash_key;
 };
 
@@ -1064,7 +1064,7 @@ bool ass_shaper_shape(ASS_Shaper *shaper, TextInfo *text_info)
 /**
  * \brief Create a new shaper instance
  */
-ASS_Shaper *ass_shaper_new(Cache *metrics_cache, Cache *sized_shaper_font_cache)
+ASS_Shaper *ass_shaper_new(CacheClient *metrics_cache, CacheClient *sized_shaper_font_cache)
 {
     assert(metrics_cache);
 

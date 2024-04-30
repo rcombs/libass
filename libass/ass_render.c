@@ -88,7 +88,16 @@ static bool render_context_init(RenderContext *state, ASS_Renderer *priv)
     if (!text_info_init(&state->text_info))
         return false;
 
-    if (!(state->shaper = ass_shaper_new(priv->cache.metrics_cache, priv->cache.sized_shaper_font_cache)))
+    state->cache.font_cache = ass_cache_client_create(priv->cache.font_cache);
+    state->cache.bitmap_cache = ass_cache_client_create(priv->cache.bitmap_cache);
+    state->cache.composite_cache = ass_cache_client_create(priv->cache.composite_cache);
+    state->cache.outline_cache = ass_cache_client_create(priv->cache.outline_cache);
+    state->cache.sized_shaper_font_cache = ass_cache_client_create(priv->cache.sized_shaper_font_cache);
+    state->cache.metrics_cache = ass_cache_client_create(priv->cache.metrics_cache);
+    if (!state->cache.font_cache || !state->cache.bitmap_cache || !state->cache.composite_cache || !state->cache.outline_cache || !state->cache.sized_shaper_font_cache || !state->cache.metrics_cache)
+        return false;
+
+    if (!(state->shaper = ass_shaper_new(state->cache.metrics_cache, state->cache.sized_shaper_font_cache)))
         return false;
 
     return ass_rasterizer_init(&priv->engine, &state->rasterizer, RASTERIZER_PRECISION);
@@ -100,6 +109,13 @@ static void render_context_done(RenderContext *state)
 
     if (state->shaper)
         ass_shaper_free(state->shaper);
+
+    ass_cache_client_done(state->cache.composite_cache);
+    ass_cache_client_done(state->cache.bitmap_cache);
+    ass_cache_client_done(state->cache.outline_cache);
+    ass_cache_client_done(state->cache.sized_shaper_font_cache);
+    ass_cache_client_done(state->cache.metrics_cache);
+    ass_cache_client_done(state->cache.font_cache);
 
     text_info_done(&state->text_info);
 }
@@ -228,6 +244,8 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     ass_frame_unref(render_priv->images_root);
     ass_frame_unref(render_priv->prev_images_root);
 
+    render_context_done(&render_priv->state);
+
     ass_cache_done(render_priv->cache.composite_cache);
     ass_cache_done(render_priv->cache.bitmap_cache);
     ass_cache_done(render_priv->cache.outline_cache);
@@ -240,8 +258,6 @@ void ass_renderer_done(ASS_Renderer *render_priv)
     if (render_priv->ftlibrary)
         FT_Done_FreeType(render_priv->ftlibrary);
     free(render_priv->eimg);
-
-    render_context_done(&render_priv->state);
 
     free(render_priv->settings.default_font);
     free(render_priv->settings.default_family);
@@ -768,12 +784,12 @@ static void blend_vector_clip(RenderContext *state, ASS_Image *head)
 
     ASS_Vector pos;
     BitmapHashKey key;
-    key.outline = ass_cache_get(render_priv->cache.outline_cache, &ol_key, render_priv);
+    key.outline = ass_cache_get(state->cache.outline_cache, &ol_key, render_priv);
     if (!key.outline || !key.outline->valid ||
             !quantize_transform(m, &pos, NULL, true, &key)) {
         return;
     }
-    Bitmap *clip_bm = ass_cache_get(render_priv->cache.bitmap_cache, &key, state);
+    Bitmap *clip_bm = ass_cache_get(state->cache.bitmap_cache, &key, state);
     if (!clip_bm)
         return;
 
@@ -1226,7 +1242,7 @@ get_outline_glyph(RenderContext *state, GlyphInfo *info)
     if (info->drawing_text.str) {
         key.type = OUTLINE_DRAWING;
         key.u.drawing.text = info->drawing_text;
-        val = ass_cache_get(priv->cache.outline_cache, &key, priv);
+        val = ass_cache_get(state->cache.outline_cache, &key, priv);
         if (!val || !val->valid) {
             return;
         }
@@ -1250,7 +1266,7 @@ get_outline_glyph(RenderContext *state, GlyphInfo *info)
         k->italic = info->italic;
         k->flags = info->flags;
 
-        val = ass_cache_get(priv->cache.outline_cache, &key, priv);
+        val = ass_cache_get(state->cache.outline_cache, &key, priv);
         if (!val || !val->valid) {
             return;
         }
@@ -1463,7 +1479,7 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
     if (!quantize_transform(m, pos, offset, first, &key)) {
         return;
     }
-    info->bm = ass_cache_get(render_priv->cache.bitmap_cache, &key, state);
+    info->bm = ass_cache_get(state->cache.bitmap_cache, &key, state);
     if (!info->bm || !info->bm->buffer) {
         info->bm = NULL;
     }
@@ -1582,12 +1598,12 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
         }
     }
 
-    key.outline = ass_cache_get(render_priv->cache.outline_cache, &ol_key, render_priv);
+    key.outline = ass_cache_get(state->cache.outline_cache, &ol_key, render_priv);
     if (!key.outline || !key.outline->valid ||
             !quantize_transform(m, pos_o, offset, false, &key)) {
         return;
     }
-    info->bm_o = ass_cache_get(render_priv->cache.bitmap_cache, &key, state);
+    info->bm_o = ass_cache_get(state->cache.bitmap_cache, &key, state);
     if (!info->bm_o || !info->bm_o->buffer) {
         info->bm_o = NULL;
         *pos_o = *pos;
@@ -2668,7 +2684,7 @@ static void render_and_combine_glyphs(RenderContext *state,
         key.filter = info->filter;
         key.bitmap_count = info->bitmap_count;
         key.bitmaps = info->bitmaps;
-        CompositeHashValue *val = ass_cache_get(render_priv->cache.composite_cache, &key, render_priv);
+        CompositeHashValue *val = ass_cache_get(state->cache.composite_cache, &key, render_priv);
         if (!val)
             continue;
 

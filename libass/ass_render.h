@@ -213,6 +213,15 @@ typedef struct {
 
 #include "ass_shaper.h"
 
+typedef struct {
+    CacheClient *font_cache;
+    CacheClient *outline_cache;
+    CacheClient *bitmap_cache;
+    CacheClient *composite_cache;
+    CacheClient *sized_shaper_font_cache;
+    CacheClient *metrics_cache;
+} CacheClientStore;
+
 // Renderer state.
 // Values like current font face, color, screen position, clipping and so on are stored here.
 struct render_context {
@@ -220,6 +229,7 @@ struct render_context {
     TextInfo text_info;
     ASS_Shaper *shaper;
     RasterizerData rasterizer;
+    CacheClientStore cache;
 
     ASS_Event *event;
     ASS_Style *style;
