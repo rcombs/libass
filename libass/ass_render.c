@@ -1206,7 +1206,7 @@ init_render_context(RenderContext *state, ASS_Event *event)
 
     ass_apply_transition_effects(state);
     state->explicit = state->evt_type != EVENT_NORMAL ||
-                      ass_event_has_hard_overrides(event->Text);
+                      ass_event_has_hard_overrides(event->Text, false);
 
     ass_reset_render_context(state, NULL);
     state->alignment = state->style->Alignment;

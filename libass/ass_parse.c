@@ -1150,7 +1150,7 @@ unsigned ass_get_next_char(RenderContext *state, char **str)
 
 // Return 1 if the event contains tags that will apply overrides the selective
 // style override code should not touch. Return 0 otherwise.
-int ass_event_has_hard_overrides(char *str)
+int ass_event_has_hard_overrides(char *str, bool detect_collisions)
 {
     // look for \pos and \move tags inside {...}
     // mirrors ass_get_next_char, but is faster and doesn't change any global state
@@ -1162,10 +1162,10 @@ int ass_event_has_hard_overrides(char *str)
             while (*str && *str != '}') {
                 if (*str == '\\') {
                     char *p = str + 1;
-                    if (mystrcmp(&p, "pos") || mystrcmp(&p, "move") ||
-                        mystrcmp(&p, "clip") || mystrcmp(&p, "iclip") ||
-                        mystrcmp(&p, "org") || mystrcmp(&p, "pbo") ||
-                        mystrcmp(&p, "p"))
+                    if (mystrcmp(&p, "pos") || mystrcmp(&p, "move") || mystrcmp(&p, "org") ||
+                        (detect_collisions ?
+                         mystrcmp(&p, "t") :
+                         (mystrcmp(&p, "clip") || mystrcmp(&p, "iclip") || mystrcmp(&p, "p"))))
                         return 1;
                 }
                 str++;
