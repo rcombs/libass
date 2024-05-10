@@ -78,6 +78,8 @@ typedef struct {
     ASS_ShapingLevel shaper;
     int selective_style_overrides; // ASS_OVERRIDE_* flags
 
+    ASS_EventType event_types;
+
     char *default_font;
     char *default_family;
 
@@ -350,6 +352,7 @@ struct ass_renderer {
     ASS_Track *track;
     long long time;             // frame's timestamp, ms
     double par_scale_x;        // x scale applied to all glyphs to preserve text aspect ratio
+    int min_dialogue_layer;
 
     RenderContext state;
     CacheStore cache;

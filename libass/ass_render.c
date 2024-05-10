@@ -176,6 +176,7 @@ ASS_Renderer *ass_renderer_init(ASS_Library *library)
 
     priv->settings.font_size_coeff = 1.;
     priv->settings.selective_style_overrides = ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
+    priv->settings.event_types = ASS_EVENT_TYPE_ALL;
 
     ass_shaper_info(library);
     priv->settings.shaper = ASS_SHAPING_COMPLEX;
@@ -2919,6 +2920,11 @@ ass_render_event(RenderContext *state, EventImages *event_images)
         return false;
     }
 
+    ASS_EventType type = (event->Layer >= render_priv->min_dialogue_layer) ? ASS_EVENT_TYPE_DIALOGUE : ASS_EVENT_TYPE_SIGNS;
+    if (!(type & render_priv->settings.event_types)) {
+        return false;
+    }
+
     setup_shaper(state->shaper, render_priv);
 
     free_render_context(state);
@@ -3217,6 +3223,7 @@ ass_start_frame(ASS_Renderer *render_priv, ASS_Track *track,
 
     render_priv->track = track;
     render_priv->time = now;
+    render_priv->min_dialogue_layer = INT_MAX;
 
     ass_lazy_track_init(render_priv->library, render_priv->track);
 
@@ -3498,6 +3505,21 @@ static int ass_detect_change(ASS_Renderer *priv)
     return diff;
 }
 
+static bool event_is_dialogue(ASS_Event *event)
+{
+    if (ass_event_has_hard_overrides(event->Text, true))
+        return false;
+
+    if (event->Effect && *event->Effect) {
+        if (strncmp(event->Effect, "Banner;", 7) == 0 ||
+            strncmp(event->Effect, "Scroll up;", 10) == 0 ||
+            strncmp(event->Effect, "Scroll down;", 12) == 0)
+            return false;
+    }
+
+    return true;
+}
+
 /**
  * \brief render a frame
  * \param priv library handle
@@ -3532,6 +3554,8 @@ ASS_Image *ass_render_frame(ASS_Renderer *priv, ASS_Track *track,
             priv->eimg[cnt++] = (EventImages){
                 .event = event,
             };
+            if (event->Layer < priv->min_dialogue_layer && event_is_dialogue(event))
+                priv->min_dialogue_layer = event->Layer;
         }
     }
 
