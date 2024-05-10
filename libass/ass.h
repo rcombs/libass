@@ -606,6 +606,37 @@ int ass_fonts_update(ASS_Renderer *priv);
 void ass_set_cache_limits(ASS_Renderer *priv, int glyph_max,
                           int bitmap_max_size);
 
+
+/**
+ * \brief Event types.
+ *
+ * DIALOGUE events are ordinary subtitle text, which should usually be rendered
+ * at display resolution for optimal sharpness.
+ * SIGNS events are complex typesetting, and should usually be rendered
+ * at video resolution for improved performance and pixel-accurate output.
+ *
+ * libass makes a best-effort attempt to determine if a line is dialogue or a sign.
+ * If a line is layered above another line that is believed to be dialogue,
+ * it will always be assumed to be dialogue, so all signs can always be blended
+ * before all dialogue.
+ */
+typedef enum {
+    ASS_EVENT_TYPE_NONE = 0,
+    ASS_EVENT_TYPE_DIALOGUE = 1,
+    ASS_EVENT_TYPE_SIGNS = 2,
+    ASS_EVENT_TYPE_ALL = 3,
+} ASS_EventType;
+
+/**
+ * \brief Set types of events to render.
+ *
+ * \param priv renderer handle
+ * \param types types of events to render
+ *
+ * If this function is not called, the default value is ASS_EVENT_TYPES_ALL.
+ */
+void ass_set_event_types(ASS_Renderer *priv, ASS_EventType types);
+
 /**
  * \brief Render a frame, producing a list of ASS_Image.
  * \param priv renderer handle

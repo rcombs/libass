@@ -197,6 +197,11 @@ int ass_fonts_update(ASS_Renderer *render_priv)
     return 1;
 }
 
+void ass_set_event_types(ASS_Renderer *priv, ASS_EventType types)
+{
+    priv->settings.event_types = types;
+}
+
 void ass_set_cache_limits(ASS_Renderer *render_priv, int glyph_max,
                           int bitmap_max)
 {
