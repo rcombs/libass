@@ -430,11 +430,13 @@ bool ass_outline_transform_2d(ASS_Outline *outline, const ASS_Outline *source,
 
 /*
  * \brief Apply perspective transform by 3x3 matrix to the outline
+ * Depth is floored at min_depth before division; offset is added afterwards.
  * Result outline should be uninitialized or empty.
  * Source outline can be NULL.
  */
 bool ass_outline_transform_3d(ASS_Outline *outline, const ASS_Outline *source,
-                              const double m[3][3])
+                              const double m[3][3], double min_depth,
+                              ASS_DVector offset)
 {
     if (!source || !source->n_points) {
         ass_outline_clear(outline);
@@ -450,9 +452,9 @@ bool ass_outline_transform_3d(ASS_Outline *outline, const ASS_Outline *source,
         for (int k = 0; k < 3; k++)
             v[k] = m[k][0] * pt[i].x + m[k][1] * pt[i].y + m[k][2];
 
-        double w = 1 / FFMAX(v[2], 0.1);
-        v[0] *= w;
-        v[1] *= w;
+        double w = 1 / FFMAX(v[2], min_depth);
+        v[0] = v[0] * w + offset.x;
+        v[1] = v[1] * w + offset.y;
 
         if (!(fabs(v[0]) < OUTLINE_MAX && fabs(v[1]) < OUTLINE_MAX)) {
             ass_outline_free(outline);
@@ -472,11 +474,13 @@ bool ass_outline_transform_3d(ASS_Outline *outline, const ASS_Outline *source,
  */
 void ass_outline_update_min_transformed_x(const ASS_Outline *outline,
                                           const double m[3][3],
+                                          double min_depth, ASS_DVector offset,
                                           int32_t *min_x) {
     const ASS_Vector *pt = outline->points;
     for (size_t i = 0; i < outline->n_points; i++) {
         double z = m[2][0] * pt[i].x + m[2][1] * pt[i].y + m[2][2];
-        double x = (m[0][0] * pt[i].x + m[0][1] * pt[i].y + m[0][2]) / FFMAX(z, 0.1);
+        double x = (m[0][0] * pt[i].x + m[0][1] * pt[i].y + m[0][2]) /
+                   FFMAX(z, min_depth) + offset.x;
         if (ass_isnan(x))
             continue;
         int32_t ix = ass_lrint(FFMINMAX(x, -OUTLINE_MAX, OUTLINE_MAX));

@@ -116,11 +116,13 @@ bool ass_outline_scale_pow2(ASS_Outline *outline, const ASS_Outline *source,
 bool ass_outline_transform_2d(ASS_Outline *outline, const ASS_Outline *source,
                               const double m[2][3]);
 bool ass_outline_transform_3d(ASS_Outline *outline, const ASS_Outline *source,
-                              const double m[3][3]);
+                              const double m[3][3], double min_depth,
+                              ASS_DVector offset);
 
 // info queries
 void ass_outline_update_min_transformed_x(const ASS_Outline *outline,
                                           const double m[3][3],
+                                          double min_depth, ASS_DVector offset,
                                           int32_t *min_x);
 void ass_outline_update_cbox(const ASS_Outline *outline, ASS_Rect *cbox);
 

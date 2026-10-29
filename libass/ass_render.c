@@ -43,7 +43,6 @@
 #define STROKER_PRECISION 16     // stroker error in integer units, unrelated to final accuracy
 #define RASTERIZER_PRECISION 16  // rasterizer spline approximation error in 1/64 pixel units
 #define POSITION_PRECISION 8.0   // rough estimate of transform error in 1/64 pixel units
-#define MAX_PERSP_SCALE 16.0
 #define SUBPIXEL_ORDER 3  // ~ log2(64 / POSITION_PRECISION)
 #define BLUR_PRECISION (1.0 / 256)  // blur error as fraction of full input range
 
@@ -495,22 +494,23 @@ render_glyph(RenderContext *state, Bitmap *bm, int dst_x, int dst_y,
     return tail;
 }
 
-static bool quantize_transform(double m[3][3], ASS_Vector *pos,
+static bool quantize_transform(double m[3][3], ASS_DVector origin,
+                               double min_depth, ASS_Vector *pos,
                                ASS_DVector *offset, bool first,
                                BitmapHashKey *key)
 {
-    // Full transform:
-    // x_out = (m_xx * x + m_xy * y + m_xz) / z,
-    // y_out = (m_yx * x + m_yy * y + m_yz) / z,
+    // Full transform (positions are in 1/64 pixels):
+    // x_out = origin.x + (m_xx * x + m_xy * y + m_xz) / max(z, min_depth),
+    // y_out = origin.y + (m_yx * x + m_yy * y + m_yz) / max(z, min_depth),
     // z     =  m_zx * x + m_zy * y + m_zz.
 
     const double max_val = 1000000;
 
     const ASS_Rect *bbox = &key->outline->cbox;
-    double x0 = (bbox->x_min + bbox->x_max) / 2.0;
-    double y0 = (bbox->y_min + bbox->y_max) / 2.0;
-    double dx = (bbox->x_max - bbox->x_min) / 2.0 + 64;
-    double dy = (bbox->y_max - bbox->y_min) / 2.0 + 64;
+    double x0 = ((double) bbox->x_min + bbox->x_max) / 2.0;
+    double y0 = ((double) bbox->y_min + bbox->y_max) / 2.0;
+    double dx = ((double) bbox->x_max - bbox->x_min) / 2.0 + 64;
+    double dy = ((double) bbox->y_max - bbox->y_min) / 2.0 + 64;
 
     // Change input coordinates' origin to (x0, y0),
     // after that transformation x:[-dx, dx], y:[-dy, dy],
@@ -518,17 +518,27 @@ static bool quantize_transform(double m[3][3], ASS_Vector *pos,
     for (int i = 0; i < 3; i++)
         m[i][2] += m[i][0] * x0 + m[i][1] * y0;
 
-    if (m[2][2] <= 0)
+    if (!(min_depth > 0 && isfinite(min_depth)))
+        return false;
+    // Minimal bounding box z coordinate
+    double z0 = m[2][2] - fabs(m[2][0]) * dx - fabs(m[2][1]) * dy;
+    double scale = FFMAX(z0, min_depth);
+    if (!isfinite(scale))
         return false;
 
-    double w = 1 / m[2][2];
-    // Transformed center of bounding box
-    double center[2] = { m[0][2] * w, m[1][2] * w };
-    // Change output coordinates' origin to center,
-    // m_xz and m_yz is skipped as it becomes 0 and no longer needed.
-    for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 2; j++)
-            m[i][j] -= m[2][j] * center[i];
+    double center[2] = { origin.x, origin.y };
+    if (z0 >= min_depth) {
+        // Every point in the expanded source box has z >= min_depth, so
+        // max(z, min_depth) equals z throughout the box. We can change output
+        // coordinates' origin to the transformed bounding box center, making
+        // m_xz and m_yz zero and keeping translated copies of a glyph reusable.
+        for (int i = 0; i < 2; i++) {
+            double c = m[i][2] / m[2][2];
+            center[i] += c;
+            for (int j = 0; j < 3; j++)
+                m[i][j] -= c * m[2][j];
+        }
+    }
 
     double delta[2] = {0};
     if (!first) {
@@ -536,21 +546,20 @@ static bool quantize_transform(double m[3][3], ASS_Vector *pos,
         delta[1] = offset->y;
     }
 
-    int32_t qr[2];  // quantized center position
+    int32_t qr[2];  // quantized output origin
     for (int i = 0; i < 2; i++) {
         center[i] /= 64 >> SUBPIXEL_ORDER;
         center[i] -= delta[i];
+        // center is measured in 1/(1 << SUBPIXEL_ORDER) pixels here.
+        // max_val limits placement to 125000 pixels when SUBPIXEL_ORDER=3.
         if (!(fabs(center[i]) < max_val))
             return false;
         qr[i] = ass_lrint(center[i]);
     }
 
-    // Minimal bounding box z coordinate
-    double z0 = m[2][2] - fabs(m[2][0]) * dx - fabs(m[2][1]) * dy;
-    // z0 clamped to z_center / MAX_PERSP_SCALE to mitigate problems with small z
-    w = 1.0 / POSITION_PRECISION / FFMAX(z0, m[2][2] / MAX_PERSP_SCALE);
-    double mul[2] = { dx * w, dy * w };  // 1 / q_x, 1 / q_y
-
+    // Divide all matrix rows by scale = max(z0, min_depth), then use
+    // max(z / scale, 1) as the divisor. If scale = z0 > min_depth, every point
+    // in the box has z >= scale, so this leaves its projection unchanged.
     // z0 = m_zz - |m_zx| * dx - |m_zy| * dy,
     // m_zz = z0 + |m_zx| * dx + |m_zy| * dy,
     // z = m_zx * x + m_zy * y + m_zz
@@ -559,75 +568,72 @@ static bool quantize_transform(double m[3][3], ASS_Vector *pos,
     // Let D(f) denote the absolute error of a quantity f.
     // Our goal is to determine tolerable error for matrix coefficients,
     // so that the total error of the output x_out, y_out is still acceptable.
-    // As glyph dimensions are usually larger than a couple of pixels, errors
-    // will be relatively small and we can use first order approximation.
+    // The positive minimum divisor lets us bound the error without a first order approximation.
 
-    // z0 is effectively a scale factor and can thus be treated as a constant.
-    // Error of constants is obviously zero, so:  D(dx) = D(dy) = D(z0) = 0.
-    // For arbitrary quantities A, B, C with C not zero, the following holds true:
+    // scale is a common homogeneous scale factor and can be treated as a constant.
+    // Error of constants is obviously zero, so: D(dx) = D(dy) = D(scale) = 0.
+    // For arbitrary quantities A, B, C with C strictly positive, the following holds true:
     //   D(A * B) <= D(A) * max|B| + max|A| * D(B),
     //   D(1 / C) <= D(C) * max|1 / C^2|.
-    // Write ~ for 'same magnitude' and ~= for 'approximately'.
+    // All maxima include both the exact and rounded quantities.
 
-    // D(x_out) = D((m_xx * x + m_xy * y) / z)
-    //  <= D(m_xx * x + m_xy * y) * max|1 / z| + max|m_xx * x + m_xy * y| * D(1 / z)
-    //  <= (D(m_xx) * dx + D(m_xy) * dy) / z0 + (|m_xx| * dx + |m_xy| * dy) * D(z) / z0^2,
-    // D(y_out) = D((m_yx * x + m_yy * y) / z)
-    //  <= D(m_yx * x + m_yy * y) * max|1 / z| + max|m_yx * x + m_yy * y| * D(1 / z)
-    //  <= (D(m_yx) * dx + D(m_yy) * dy) / z0 + (|m_yx| * dx + |m_yy| * dy) * D(z) / z0^2,
-    // |m_xx| * dx + |m_xy| * dy = x_lim,
-    // |m_yx| * dx + |m_yy| * dy = y_lim,
-    // D(z) <= 2 * (D(m_zx) * dx + D(m_zy) * dy),
-    // D(x_out) <= (D(m_xx) * dx + D(m_xy) * dy) / z0
-    //       + 2 * (D(m_zx) * dx + D(m_zy) * dy) * x_lim / z0^2,
-    // D(y_out) <= (D(m_yx) * dx + D(m_yy) * dy) / z0
-    //       + 2 * (D(m_zx) * dx + D(m_zy) * dy) * y_lim / z0^2.
+    // Write N_x, N_y for the numerator rows divided by scale, and
+    // Z = max(z / scale, 1). Both exact and rounded divisors Z, Z_hat are >= 1.
+    // Applying max(..., 1) cannot increase the absolute depth error.
+    // Using N_hat for the rounded numerator in the exact difference identity:
+    // D(x_out) = D(N_x / Z)
+    //  <= D(N_x) / Z + |N_x_hat| * D(Z) / (Z * Z_hat)
+    //  <= D(N_x) + max|N_x_hat| * D(Z),
+    // D(y_out) = D(N_y / Z)
+    //  <= D(N_y) + max|N_y_hat| * D(Z).
+    // The independent constant terms now contribute to both numerator and depth errors:
+    // D(N_x) <= (D(m_xx) * dx + D(m_xy) * dy + D(m_xz)) / scale,
+    // D(N_y) <= (D(m_yx) * dx + D(m_yy) * dy + D(m_yz)) / scale,
+    // D(Z) <= (D(m_zx) * dx + D(m_zy) * dy + D(m_zz)) / scale.
 
     // To estimate acceptable error in a matrix coefficient, pick ACCURACY for this substep,
     // set error in all other coefficients to zero and solve the system
     // D(x_out) <= ACCURACY, D(y_out) <= ACCURACY for desired D(m_ij).
     // Note that ACCURACY isn't equal to total error.
-    // Total error is larger than each ACCURACY, but still of the same magnitude.
-    // Via our choice of ACCURACY, we get a total error of up to several POSITION_PRECISION.
+    // Rounding each of the three numerator terms to steps POSITION_PRECISION
+    // gives D(N_x), D(N_y) <= 3 * POSITION_PRECISION / 2.
 
     // Quantization steps (pick: ACCURACY = POSITION_PRECISION):
-    // D(m_xx), D(m_yx) ~ q_x = POSITION_PRECISION * z0 / dx,
-    // D(m_xy), D(m_yy) ~ q_y = POSITION_PRECISION * z0 / dy,
-    // qm_xx = round(m_xx / q_x), qm_xy = round(m_xy / q_y),
-    // qm_yx = round(m_yx / q_x), qm_yy = round(m_yy / q_y).
+    // q_x = POSITION_PRECISION * scale / dx, q_y = POSITION_PRECISION * scale / dy,
+    // q_c = POSITION_PRECISION * scale,
+    // qm_xx = round(m_xx / q_x), qm_xy = round(m_xy / q_y), qm_xz = round(m_xz / q_c),
+    // qm_yx = round(m_yx / q_x), qm_yy = round(m_yy / q_y), qm_yz = round(m_yz / q_c).
 
-    int32_t qm[3][2];
+    double domain[3] = { dx, dy, 1 };
+    int32_t qm[3][3];
     for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 2; j++) {
-            double val = m[i][j] * mul[j];
-            if (!(fabs(val) < max_val))
+        for (int j = 0; j < 3; j++) {
+            double val = m[i][j] / scale * domain[j] / POSITION_PRECISION;
+            if (!(fabs(val) < INT32_MAX))
                 return false;
             qm[i][j] = ass_lrint(val);
         }
 
-    // x_lim = |m_xx| * dx + |m_xy| * dy
-    //  ~= |qm_xx| * q_x * dx + |qm_xy| * q_y * dy
-    //  = (|qm_xx| + |qm_xy|) * POSITION_PRECISION * z0,
-    // y_lim = |m_yx| * dx + |m_yy| * dy
-    //  ~= |qm_yx| * q_x * dx + |qm_yy| * q_y * dy
-    //  = (|qm_yx| + |qm_yy|) * POSITION_PRECISION * z0,
-    // max(x_lim, y_lim) / z0 ~= w
-    //  = max(|qm_xx| + |qm_xy|, |qm_yx| + |qm_yy|) * POSITION_PRECISION.
-
-    // Quantization steps (pick: ACCURACY = 2 * POSITION_PRECISION):
-    // D(m_zx) ~ POSITION_PRECISION * z0^2 / max(x_lim, y_lim) / dx ~= q_zx = q_x / w,
-    // D(m_zy) ~ POSITION_PRECISION * z0^2 / max(x_lim, y_lim) / dy ~= q_zy = q_y / w,
-    // qm_zx = round(m_zx / q_zx), qm_zy = round(m_zy / q_zy).
-
-    int32_t qmx = abs(qm[0][0]) + abs(qm[0][1]);
-    int32_t qmy = abs(qm[1][0]) + abs(qm[1][1]);
-    w = POSITION_PRECISION * FFMAX(qmx, qmy);
-    mul[0] *= w;
-    mul[1] *= w;
-
-    for (int j = 0; j < 2; j++) {
-        double val = m[2][j] * mul[j];
-        if (!(fabs(val) < max_val))
+    // x_lim = |m_xx| * dx + |m_xy| * dy + |m_xz|,
+    // y_lim = |m_yx| * dx + |m_yy| * dy + |m_yz|.
+    // After rounding, the corresponding normalized bounds are
+    // max|N_x_hat| <= (|qm_xx| + |qm_xy| + |qm_xz|) * POSITION_PRECISION,
+    // max|N_y_hat| <= (|qm_yx| + |qm_yy| + |qm_yz|) * POSITION_PRECISION.
+    // Let q be the greater of these integer sums. For nonzero q, choose
+    // q_zx = scale / (q * dx), q_zy = scale / (q * dy), q_zz = scale / q,
+    // qm_zx = round(m_zx / q_zx), qm_zy = round(m_zy / q_zy), qm_zz = round(m_zz / q_zz).
+    // This gives D(Z) <= 3 / (2q), so the depth contribution to the output
+    // error is <= (q * POSITION_PRECISION) * 3 / (2q).
+    // Together with the numerator error, this is <= 3 * POSITION_PRECISION,
+    // before rounding the output origin and outline points, even when a clamp decision changes.
+    // If q = 0, the rounded numerators vanish and depth is irrelevant.
+    // Use wide sums to avoid overflow when adding three 32-bit coefficients.
+    int64_t qmx = llabs(qm[0][0]) + llabs(qm[0][1]) + llabs(qm[0][2]);
+    int64_t qmy = llabs(qm[1][0]) + llabs(qm[1][1]) + llabs(qm[1][2]);
+    double q = FFMAX(qmx, qmy);
+    for (int j = 0; j < 3; j++) {
+        double val = m[2][j] / scale * domain[j] * q;
+        if (!(fabs(val) < INT32_MAX))
             return false;
         qm[2][j] = ass_lrint(val);
     }
@@ -645,18 +651,23 @@ static bool quantize_transform(double m[3][3], ASS_Vector *pos,
     key->matrix_x.x = qm[0][0];  key->matrix_x.y = qm[0][1];
     key->matrix_y.x = qm[1][0];  key->matrix_y.y = qm[1][1];
     key->matrix_z.x = qm[2][0];  key->matrix_z.y = qm[2][1];
+    key->matrix_offset.x = qm[0][2];  key->matrix_offset.y = qm[1][2];
+    key->matrix_zz = qm[2][2];
     return true;
 }
 
-static void restore_transform(double m[3][3], const BitmapHashKey *key)
+static void restore_transform(double m[3][3], ASS_DVector *offset,
+                               const BitmapHashKey *key)
 {
     const ASS_Rect *bbox = &key->outline->cbox;
-    double x0 = (bbox->x_min + bbox->x_max) / 2.0;
-    double y0 = (bbox->y_min + bbox->y_max) / 2.0;
-    double dx = (bbox->x_max - bbox->x_min) / 2.0 + 64;
-    double dy = (bbox->y_max - bbox->y_min) / 2.0 + 64;
+    double x0 = ((double) bbox->x_min + bbox->x_max) / 2.0;
+    double y0 = ((double) bbox->y_min + bbox->y_max) / 2.0;
+    double dx = ((double) bbox->x_max - bbox->x_min) / 2.0 + 64;
+    double dy = ((double) bbox->y_max - bbox->y_min) / 2.0 + 64;
 
-    // Arbitrary scale has chosen so that z0 = 1
+    // quantize_transform() divided all matrix rows by scale = max(z0, min_depth).
+    // The restored z is dimensionless: original z / scale. A minimum divisor
+    // of 1 therefore corresponds to z = scale in the original matrix's units.
     double q_x = POSITION_PRECISION / dx;
     double q_y = POSITION_PRECISION / dy;
     m[0][0] = key->matrix_x.x * q_x;
@@ -664,23 +675,23 @@ static void restore_transform(double m[3][3], const BitmapHashKey *key)
     m[1][0] = key->matrix_y.x * q_x;
     m[1][1] = key->matrix_y.y * q_y;
 
-    int32_t qmx = abs(key->matrix_x.x) + abs(key->matrix_x.y);
-    int32_t qmy = abs(key->matrix_y.x) + abs(key->matrix_y.y);
-    double scale_z = 1.0 / POSITION_PRECISION / FFMAX(qmx, qmy);
-    m[2][0] = key->matrix_z.x * q_x * scale_z;  // qm_zx * q_zx
-    m[2][1] = key->matrix_z.y * q_y * scale_z;  // qm_zy * q_zy
+    int64_t qmx = llabs(key->matrix_x.x) + llabs(key->matrix_x.y) +
+                  llabs(key->matrix_offset.x);
+    int64_t qmy = llabs(key->matrix_y.x) + llabs(key->matrix_y.y) +
+                  llabs(key->matrix_offset.y);
+    double q = FFMAX(qmx, qmy);
+    m[2][0] = q ? key->matrix_z.x / q / dx : 0;
+    m[2][1] = q ? key->matrix_z.y / q / dy : 0;
 
-    m[0][2] = m[1][2] = 0;
-    m[2][2] = 1 + fabs(m[2][0]) * dx + fabs(m[2][1]) * dy;
-    m[2][2] = FFMIN(m[2][2], MAX_PERSP_SCALE);
+    m[0][2] = key->matrix_offset.x * POSITION_PRECISION;
+    m[1][2] = key->matrix_offset.y * POSITION_PRECISION;
+    m[2][2] = q ? key->matrix_zz / q : 1;
 
-    double center[2] = {
+    // Translation must follow the clamped division, including its fraction.
+    *offset = (ASS_DVector) {
         key->offset.x * (64 >> SUBPIXEL_ORDER),
         key->offset.y * (64 >> SUBPIXEL_ORDER),
     };
-    for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 3; j++)
-            m[i][j] += m[2][j] * center[i];
 
     for (int i = 0; i < 3; i++)
         m[i][2] -= m[i][0] * x0 + m[i][1] * y0;
@@ -722,7 +733,7 @@ static void blend_vector_clip(RenderContext *state, ASS_Image *head)
     BitmapHashKey key;
     key.outline = ass_cache_get(render_priv->cache.outline_cache, &ol_key, render_priv);
     if (!key.outline || !key.outline->valid ||
-            !quantize_transform(m, &pos, NULL, true, &key))
+            !quantize_transform(m, (ASS_DVector) {0}, 1, &pos, NULL, true, &key))
         return;
 
     Bitmap *clip_bm = ass_cache_get(render_priv->cache.bitmap_cache, &key, state);
@@ -1324,7 +1335,8 @@ size_t ass_outline_construct(void *key, void *value, void *priv)
  * \brief Calculate outline transformation matrix
  */
 static void calc_transform_matrix(RenderContext *state,
-                                  GlyphInfo *info, double m[3][3])
+                                  GlyphInfo *info, double m[3][3],
+                                  ASS_DVector *offset)
 {
     ASS_Renderer *render_priv = state->renderer;
 
@@ -1363,11 +1375,13 @@ static void calc_transform_matrix(RenderContext *state,
     z4[2] += dist;
 
     double scale_x = dist * render_priv->par_scale_x;
-    double offs_x = info->pos.x - info->shift.x * render_priv->par_scale_x;
-    double offs_y = info->pos.y - info->shift.y;
+    *offset = (ASS_DVector) {
+        info->pos.x - info->shift.x * render_priv->par_scale_x,
+        info->pos.y - info->shift.y,
+    };
     for (int i = 0; i < 3; i++) {
-        m[0][i] = z4[i] * offs_x + x4[i] * scale_x;
-        m[1][i] = z4[i] * offs_y + y3[i] * dist;
+        m[0][i] = x4[i] * scale_x;
+        m[1][i] = y3[i] * dist;
         m[2][i] = z4[i];
     }
 }
@@ -1393,7 +1407,12 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
 
     double m1[3][3], m2[3][3], m[3][3];
     const ASS_Transform *tr = &info->transform;
-    calc_transform_matrix(state, info, m1);
+    ASS_DVector origin;
+    calc_transform_matrix(state, info, m1, &origin);
+    // calc_transform_matrix() uses a projection distance of 20000 * blur_scale_y.
+    // Use VSFilter's minimum z divisor of 1000 in the same units, limiting
+    // the projection factor distance / max(z, min_depth) to at most 20.
+    double min_depth = 1000 * state->blur_scale_y;
     for (int i = 0; i < 3; i++) {
         m2[i][0] = m1[i][0] * tr->scale.x;
         m2[i][1] = m1[i][1] * tr->scale.y;
@@ -1402,11 +1421,12 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
     memcpy(m, m2, sizeof(m));
 
     if (info->effect_type == EF_KARAOKE_KF)
-        ass_outline_update_min_transformed_x(&info->outline->outline[0], m, leftmost_x);
+        ass_outline_update_min_transformed_x(&info->outline->outline[0], m,
+                                             min_depth, origin, leftmost_x);
 
     BitmapHashKey key;
     key.outline = info->outline;
-    if (!quantize_transform(m, pos, offset, first, &key))
+    if (!quantize_transform(m, origin, min_depth, pos, offset, first, &key))
         return;
 
     info->bm = ass_cache_get(render_priv->cache.bitmap_cache, &key, state);
@@ -1475,24 +1495,40 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
         double dy = (bbox->y_max - bbox->y_min) / 2.0 + (bord_y + 64);
 
         // Matrix after quantize_transform() has
-        // input and output origin at bounding box center.
+        // input origin at bounding box center; output centering is conditional.
+        // The stroking domain can include z < min_depth even when the fill's
+        // box does not. In that case estimate its error with the original
+        // numerator, because the fill's output centering is no longer exact
+        // over the stroking domain.
+        double border_z0 = m[2][2] - fabs(m[2][0]) * dx - fabs(m[2][1]) * dy;
+        if (border_z0 < min_depth) {
+            double x0 = ((double) bbox->x_min + bbox->x_max) / 2.0;
+            double y0 = ((double) bbox->y_min + bbox->y_max) / 2.0;
+            for (int i = 0; i < 2; i++) {
+                m[i][0] = m2[i][0];
+                m[i][1] = m2[i][1];
+                m[i][2] = m2[i][2] + m2[i][0] * x0 + m2[i][1] * y0;
+            }
+        }
+
         double mxx = fabs(m[0][0]), mxy = fabs(m[0][1]);
         double myx = fabs(m[1][0]), myy = fabs(m[1][1]);
         double mzx = fabs(m[2][0]), mzy = fabs(m[2][1]);
 
         double z0 = m[2][2] - mzx * dx - mzy * dy;
-        double w = 1 / FFMAX(z0, m[2][2] / MAX_PERSP_SCALE);
+        double w = 1 / FFMAX(z0, min_depth);
 
         // Notation from quantize_transform().
         // Note that goal here is to estimate acceptable error for stroking, i. e. D(x) and D(y).
         // Matrix coefficients are constants now, so D(m_ij) = 0 for all i, j from {x, y, z}.
+        // Use max(z0, min_depth) as the lower bound on the divisor below, as in w.
 
         // D(z) <= |m_zx| * D(x) + |m_zy| * D(y),
-        // D(x_out) = D((m_xx * x + m_xy * y) / z)
+        // D(x_out) = D((m_xx * x + m_xy * y + m_xz) / z)
         //  <= (|m_xx| * D(x) + |m_xy| * D(y)) / z0 + x_lim * D(z) / z0^2
         //  <= (|m_xx| / z0 + |m_zx| * x_lim / z0^2) * D(x)
         //   + (|m_xy| / z0 + |m_zy| * x_lim / z0^2) * D(y),
-        // D(y_out) = D((m_yx * x + m_yy * y) / z)
+        // D(y_out) = D((m_yx * x + m_yy * y + m_yz) / z)
         //  <= (|m_yx| * D(x) + |m_yy| * D(y)) / z0 + y_lim * D(z) / z0^2
         //  <= (|m_yx| / z0 + |m_zx| * y_lim / z0^2) * D(x)
         //   + (|m_yy| / z0 + |m_zy| * y_lim / z0^2) * D(y).
@@ -1505,6 +1541,9 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
 
         double x_lim = mxx * dx + mxy * dy;
         double y_lim = myx * dx + myy * dy;
+        // Clamped outlines retain their numerator constants.
+        x_lim += fabs(m[0][2]);
+        y_lim += fabs(m[1][2]);
         double rz = FFMAX(x_lim, y_lim) * w;
 
         w *= STROKER_PRECISION / POSITION_PRECISION;
@@ -1530,7 +1569,7 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
 
     key.outline = ass_cache_get(render_priv->cache.outline_cache, &ol_key, render_priv);
     if (!key.outline || !key.outline->valid ||
-            !quantize_transform(m, pos_o, offset, false, &key))
+            !quantize_transform(m, origin, min_depth, pos_o, offset, false, &key))
         return;
 
     info->bm_o = ass_cache_get(render_priv->cache.bitmap_cache, &key, state);
@@ -1553,13 +1592,21 @@ size_t ass_bitmap_construct(void *key, void *value, void *priv)
     Bitmap *bm = value;
 
     double m[3][3];
-    restore_transform(m, k);
+    ASS_DVector offset;
+    restore_transform(m, &offset, k);
+    double min_depth = 1;
 
     ASS_Outline outline[2];
     if (k->matrix_z.x || k->matrix_z.y) {
-        ass_outline_transform_3d(&outline[0], &k->outline->outline[0], m);
-        ass_outline_transform_3d(&outline[1], &k->outline->outline[1], m);
+        ass_outline_transform_3d(&outline[0], &k->outline->outline[0], m, min_depth, offset);
+        ass_outline_transform_3d(&outline[1], &k->outline->outline[1], m, min_depth, offset);
     } else {
+        double w = 1 / FFMAX(m[2][2], min_depth);
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 3; j++)
+                m[i][j] *= w;
+            m[i][2] += i ? offset.y : offset.x;
+        }
         ass_outline_transform_2d(&outline[0], &k->outline->outline[0], m);
         ass_outline_transform_2d(&outline[1], &k->outline->outline[1], m);
     }

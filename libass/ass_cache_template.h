@@ -66,6 +66,8 @@ START(bitmap, bitmap_hash_key)
     VECTOR(matrix_x)
     VECTOR(matrix_y)
     VECTOR(matrix_z)
+    VECTOR(matrix_offset)
+    GENERIC(int32_t, matrix_zz)
 END(BitmapHashKey)
 
 // font is refed when inserted and unrefed when dropped
