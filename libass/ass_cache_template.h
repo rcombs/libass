@@ -68,6 +68,7 @@ START(bitmap, bitmap_hash_key)
     VECTOR(matrix_z)
     VECTOR(matrix_offset)
     GENERIC(int32_t, matrix_zz)
+    GENERIC(uint32_t, matrix_z_scale)  // 0: derive precision from the numerator rows
 END(BitmapHashKey)
 
 // font is refed when inserted and unrefed when dropped

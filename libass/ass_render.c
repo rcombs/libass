@@ -494,6 +494,58 @@ render_glyph(RenderContext *state, Bitmap *bm, int dst_x, int dst_y,
     return tail;
 }
 
+static bool quantize_large_depth(const double m[3][3], const double domain[3],
+                                 double scale, int32_t qm[3][3], uint32_t *precision)
+{
+    double z[3], magnitude = 0;
+    for (int j = 0; j < 3; j++) {
+        z[j] = m[2][j] / scale * domain[j];
+        if (!isfinite(z[j]))
+            return false;
+        magnitude = FFMAX(magnitude, fabs(z[j]));
+    }
+    if (!(magnitude > 0))
+        return false;
+
+    // Start with the finest integer precision that fits all three depth terms.
+    // Leave one integer step of headroom before rounding.
+    double q = floor(FFMIN(UINT32_MAX, (INT32_MAX - 1.0) / magnitude));
+    if (!(q >= 1))
+        return false;
+
+    // With both divisors >= 1, the error for either output coordinate is
+    // <= numerator_error + max|rounded_numerator| * z_error. Only reduce
+    // depth precision if these actual coefficient errors preserve the same
+    // 3 * POSITION_PRECISION budget as the ordinary quantizer.
+    double error[2] = {0}, numerator[2] = {0};
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 3; j++) {
+            double rounded = qm[i][j] * POSITION_PRECISION;
+            error[i] += fabs(m[i][j] / scale * domain[j] - rounded);
+            numerator[i] += fabs(rounded);
+        }
+    }
+
+    // Rounding errors need not decrease with increasing precision. Try up to
+    // eight adjacent integer precisions rather than rejecting on the first.
+    for (int attempt = 0; attempt < 8 && q >= 1; attempt++, q--) {
+        double z_error = 0;
+        for (int j = 0; j < 3; j++) {
+            double val = z[j] * q;
+            if (!(fabs(val) < INT32_MAX))
+                return false;
+            qm[2][j] = ass_lrint(val);
+            z_error += fabs(z[j] - qm[2][j] / q);
+        }
+        if (error[0] + numerator[0] * z_error <= 3 * POSITION_PRECISION &&
+            error[1] + numerator[1] * z_error <= 3 * POSITION_PRECISION) {
+            *precision = (uint32_t) q;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool quantize_transform(double m[3][3], ASS_DVector origin,
                                double min_depth, ASS_Vector *pos,
                                ASS_DVector *offset, bool first,
@@ -504,7 +556,7 @@ static bool quantize_transform(double m[3][3], ASS_DVector origin,
     // y_out = origin.y + (m_yx * x + m_yy * y + m_yz) / max(z, min_depth),
     // z     =  m_zx * x + m_zy * y + m_zz.
 
-    const double max_val = 1000000;
+    const double max_val = INT32_MAX;
 
     const ASS_Rect *bbox = &key->outline->cbox;
     double x0 = ((double) bbox->x_min + bbox->x_max) / 2.0;
@@ -550,8 +602,8 @@ static bool quantize_transform(double m[3][3], ASS_DVector origin,
     for (int i = 0; i < 2; i++) {
         center[i] /= 64 >> SUBPIXEL_ORDER;
         center[i] -= delta[i];
-        // center is measured in 1/(1 << SUBPIXEL_ORDER) pixels here.
-        // max_val limits placement to 125000 pixels when SUBPIXEL_ORDER=3.
+        // Check the range before rounding the subpixel position to int32_t.
+        // The integer pixel placement uses SUBPIXEL_ORDER fewer bits.
         if (!(fabs(center[i]) < max_val))
             return false;
         qr[i] = ass_lrint(center[i]);
@@ -631,10 +683,14 @@ static bool quantize_transform(double m[3][3], ASS_DVector origin,
     int64_t qmx = llabs(qm[0][0]) + llabs(qm[0][1]) + llabs(qm[0][2]);
     int64_t qmy = llabs(qm[1][0]) + llabs(qm[1][1]) + llabs(qm[1][2]);
     double q = FFMAX(qmx, qmy);
+    uint32_t z_scale = 0;
     for (int j = 0; j < 3; j++) {
         double val = m[2][j] / scale * domain[j] * q;
-        if (!(fabs(val) < INT32_MAX))
-            return false;
+        if (!(fabs(val) < INT32_MAX)) {
+            if (!quantize_large_depth(m, domain, scale, qm, &z_scale))
+                return false;
+            break;
+        }
         qm[2][j] = ass_lrint(val);
     }
 
@@ -653,6 +709,7 @@ static bool quantize_transform(double m[3][3], ASS_DVector origin,
     key->matrix_z.x = qm[2][0];  key->matrix_z.y = qm[2][1];
     key->matrix_offset.x = qm[0][2];  key->matrix_offset.y = qm[1][2];
     key->matrix_zz = qm[2][2];
+    key->matrix_z_scale = z_scale;
     return true;
 }
 
@@ -679,7 +736,7 @@ static void restore_transform(double m[3][3], ASS_DVector *offset,
                   llabs(key->matrix_offset.x);
     int64_t qmy = llabs(key->matrix_y.x) + llabs(key->matrix_y.y) +
                   llabs(key->matrix_offset.y);
-    double q = FFMAX(qmx, qmy);
+    double q = key->matrix_z_scale ? key->matrix_z_scale : FFMAX(qmx, qmy);
     m[2][0] = q ? key->matrix_z.x / q / dx : 0;
     m[2][1] = q ? key->matrix_z.y / q / dy : 0;
 
