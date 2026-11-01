@@ -84,7 +84,8 @@ static inline char *ass_copy_string(ASS_StringView src)
 
 static inline bool ass_string_equal(ASS_StringView str1, ASS_StringView str2)
 {
-    return str1.len == str2.len && !memcmp(str1.str, str2.str, str1.len);
+    return str1.len == str2.len &&
+        (str1.str == str2.str || !memcmp(str1.str, str2.str, str1.len));
 }
 
 void *ass_aligned_alloc(size_t alignment, size_t size, bool zero);
