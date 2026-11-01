@@ -1334,9 +1334,22 @@ static void calc_transform_matrix(RenderContext *state,
     double fry = ASS_PI / 180 * info->fry;
     double frz = ASS_PI / 180 * info->frz;
 
-    double sx = -sin(frx), cx = cos(frx);
-    double sy =  sin(fry), cy = cos(fry);
-    double sz = -sin(frz), cz = cos(frz);
+    // Preserve signed zero when bypassing the trigonometric functions.
+    double sx = -frx, cx = 1;
+    if (frx != 0) {
+        sx = -sin(frx);
+        cx = cos(frx);
+    }
+    double sy = fry, cy = 1;
+    if (fry != 0) {
+        sy = sin(fry);
+        cy = cos(fry);
+    }
+    double sz = -frz, cz = 1;
+    if (frz != 0) {
+        sz = -sin(frz);
+        cz = cos(frz);
+    }
 
     double fax = info->fax * info->scale_x / info->scale_y;
     double fay = info->fay * info->scale_y / info->scale_x;
