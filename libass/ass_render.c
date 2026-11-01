@@ -384,7 +384,7 @@ static ASS_Image **render_glyph_i(RenderContext *state,
         if (r[j].x1 <= r[j].x0 || r[j].y1 <= r[j].y0)
             continue;
         // split up into left and right for karaoke, if needed
-        if (lbrk > r[j].x0) {
+        if (lbrk > r[j].x0 && _a(color) != 0xFF) {
             if (lbrk > r[j].x1) lbrk = r[j].x1;
             img = my_draw_bitmap(bm->buffer + r[j].y0 * bm->stride + r[j].x0,
                                  lbrk - r[j].x0, r[j].y1 - r[j].y0, bm->stride,
@@ -394,7 +394,7 @@ static ASS_Image **render_glyph_i(RenderContext *state,
             *tail = img;
             tail = &img->next;
         }
-        if (lbrk < r[j].x1) {
+        if (lbrk < r[j].x1 && _a(color2) != 0xFF) {
             if (lbrk < r[j].x0) lbrk = r[j].x0;
             img = my_draw_bitmap(bm->buffer + r[j].y0 * bm->stride + lbrk,
                                  r[j].x1 - lbrk, r[j].y1 - r[j].y0, bm->stride,
@@ -470,7 +470,8 @@ render_glyph(RenderContext *state, Bitmap *bm, int dst_x, int dst_y,
     if ((b_y0 >= b_y1) || (b_x0 >= b_x1))
         return tail;
 
-    if (brk > b_x0) {           // draw left part
+    // draw left part
+    if (brk > b_x0 && _a(color) != 0xFF) {
         if (brk > b_x1)
             brk = b_x1;
         img = my_draw_bitmap(bm->buffer + bm->stride * b_y0 + b_x0,
@@ -481,7 +482,8 @@ render_glyph(RenderContext *state, Bitmap *bm, int dst_x, int dst_y,
         *tail = img;
         tail = &img->next;
     }
-    if (brk < b_x1) {           // draw right part
+    // draw right part
+    if (brk < b_x1 && _a(color2) != 0xFF) {
         if (brk < b_x0)
             brk = b_x0;
         img = my_draw_bitmap(bm->buffer + bm->stride * b_y0 + brk,
