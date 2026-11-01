@@ -3216,6 +3216,13 @@ static int fit_rect(Rect *s, Rect *fixed, int *cnt, int dir)
 static void
 fix_collisions(ASS_Renderer *render_priv, EventImages *imgs, int cnt)
 {
+    while (cnt && (!imgs->detect_collisions || !imgs->height || !imgs->width)) {
+        imgs++;
+        cnt--;
+    }
+    if (!cnt)
+        return;
+
     Rect *used = ass_realloc_array(NULL, cnt, sizeof(*used));
     int cnt_used = 0;
     int i, j;
