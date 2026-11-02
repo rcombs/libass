@@ -56,6 +56,10 @@ const error_message_register
         .asciz "failed to preserve register"
 error_message_stack:
         .asciz "stack clobbered"
+#if CONFIG_SME2
+error_message_za:
+        .asciz "failed to preserve ZA state"
+#endif
 endconst
 
 
@@ -83,11 +87,143 @@ function stack_clobber, export=1
 endfunc
 
 // + 16 for stack canary reference
-#define ARG_STACK ((8*(MAX_ARGS - 8) + 15) & ~15 + 16)
+#define ARG_STACK (((8*(MAX_ARGS - 8) + 15) & ~15) + 16)
+
+#define CALL_STATE_SIZE 32
+#define CALL_FUNC       (-CALL_STATE_SIZE)
+#define CALL_ZA_BLOCK   (CALL_FUNC + 8)
+#define CALL_ZA_VL      (CALL_FUNC + 16)
+#define CALL_ZA_ERROR   (CALL_FUNC + 24)
+#define SAVED_REGS_SIZE (10*8 + 8*8)
+
+#if CONFIG_SME2
+.arch armv8-a+sme2
+
+#define TPIDR2_BLOCK_SIZE 16
+
+/*
+ * Exercise the private-ZA lazy-save protocol for every checked call, including
+ * NEON fallbacks. The non-SME C driver enters with no pending ZA of its own.
+ * Each horizontal ZA slice gets a distinct byte pattern. Allocate SVL squared
+ * bytes for the save buffer so this also works at other streaming lengths.
+ * Run before initializing callee-saved registers; only caller-saved registers
+ * are used here and in check_za.
+ */
+.macro init_za
+        movrel          x9, CONCAT(EXTERN, test_za)
+        ldr             w9, [x9]
+        cbz             w9, .Lza_init_done
+        rdsvl           x11, #1
+        str             x11, [x29, #CALL_ZA_VL]
+        mul             x9, x11, x11
+        add             x9, x9, #TPIDR2_BLOCK_SIZE
+        sub             sp, sp, x9
+        mov             x9, sp
+        str             x9, [x29, #CALL_ZA_BLOCK]
+        add             x9, x9, #TPIDR2_BLOCK_SIZE
+        stp             x9, x11, [sp]  // buffer, num_za_save_slices, reserved zeros
+        mov             x10, #1
+.Lza_fill_row:
+        dup             v0.16b, w10
+        mov             x13, x11
+.Lza_fill_vector:
+        str             q0, [x9], #16
+        subs            x13, x13, #16
+        b.ne            .Lza_fill_vector
+        add             x10, x10, #1
+        cmp             x10, x11
+        b.ls            .Lza_fill_row
+
+        // Whole-ZA loads/stores are legal with SM=0 and ZA=1.
+        smstart         za
+        add             x9, sp, #TPIDR2_BLOCK_SIZE
+        mov             w12, #0
+.Lza_load:
+        ldr             za[w12, 0], [x9]
+        add             x9, x9, x11
+        add             w12, w12, #1
+        cmp             x12, x11
+        b.lo            .Lza_load
+        // Clear the buffer so stale data cannot fake a committed save.
+        add             x9, sp, #TPIDR2_BLOCK_SIZE
+        mul             x10, x11, x11
+.Lza_clear:
+        stp             xzr, xzr, [x9], #16
+        subs            x10, x10, #16
+        b.ne            .Lza_clear
+        mov             x9, sp
+        msr             TPIDR2_EL0, x9
+.Lza_init_done:
+.endm
+
+/* Accept either legal return: preserve dormant ZA, or commit its lazy save
+ * and return with ZA disabled. Check the TPIDR2 block in both cases, then
+ * inspect the saved slices. Clear SME state before reporting any failure to C.
+ */
+.macro check_za
+        ldr             x4, [x29, #CALL_ZA_BLOCK]
+        cbz             x4, .Lza_check_done
+        mrs             x9, SVCR
+        tbnz            x9, #0, .Lza_error // non-streaming interface requires SM=0
+        ldr             x6, [x29, #CALL_ZA_VL]
+        add             x7, x4, #TPIDR2_BLOCK_SIZE
+        ldp             x10, x11, [x4]
+        cmp             x10, x7
+        b.ne            .Lza_error
+        cmp             x11, x6         // includes the reserved zero bytes
+        b.ne            .Lza_error
+        mrs             x10, TPIDR2_EL0
+        cbz             x10, .Lza_committed
+        cmp             x10, x4
+        b.ne            .Lza_error
+        tbz             x9, #1, .Lza_error
+        // ZA was preserved: copy its slices to the buffer for comparison.
+        mov             x9, x7
+        mov             w12, #0
+.Lza_store:
+        str             za[w12, 0], [x9]
+        add             x9, x9, x6
+        add             w12, w12, #1
+        cmp             x12, x6
+        b.lo            .Lza_store
+        b               .Lza_verify
+.Lza_committed:
+        tbnz            x9, #1, .Lza_error
+.Lza_verify:
+        mov             x14, #0x0101010101010101
+        mov             x15, #1
+.Lza_check_row:
+        and             x11, x15, #255
+        mul             x11, x14, x11
+        lsr             x8, x6, #4
+.Lza_check_vector:
+        ldp             x9, x10, [x7], #16
+        cmp             x9, x11
+        b.ne            .Lza_error
+        cmp             x10, x11
+        b.ne            .Lza_error
+        subs            x8, x8, #1
+        b.ne            .Lza_check_vector
+        add             x15, x15, #1
+        cmp             x15, x6
+        b.ls            .Lza_check_row
+        b               .Lza_cleanup
+.Lza_error:
+        mov             x9, #1
+        str             x9, [x29, #CALL_ZA_ERROR]
+.Lza_cleanup:
+        msr             TPIDR2_EL0, xzr
+        smstop
+.Lza_check_done:
+.endm
+#endif
 
 function checked_call, export=1
+        AARCH64_SIGN_LINK_REGISTER
         stp             x29, x30, [sp, #-16]!
         mov             x29, sp
+        stp             x0, xzr, [sp, #-CALL_STATE_SIZE]!
+        stp             xzr, xzr, [sp, #16]
         stp             x19, x20, [sp, #-16]!
         stp             x21, x22, [sp, #-16]!
         stp             x23, x24, [sp, #-16]!
@@ -98,6 +234,9 @@ function checked_call, export=1
         stp             d12, d13, [sp, #-16]!
         stp             d14, d15, [sp, #-16]!
 
+#if CONFIG_SME2
+        init_za
+#endif
         movrel          x9, register_init
         ldp             d8,  d9,  [x9], #16
         ldp             d10, d11, [x9], #16
@@ -140,7 +279,7 @@ function checked_call, export=1
         str             x2,  [sp, #ARG_STACK-8]
 
         // Load the in-register arguments
-        mov             x12, x0
+        ldr             x12, [x29, #CALL_FUNC]
         ldp             x0,  x1,  [x29, #16]
         ldp             x2,  x3,  [x29, #32]
         ldp             x4,  x5,  [x29, #48]
@@ -156,10 +295,17 @@ function checked_call, export=1
         add             sp,  sp,  #ARG_STACK
         stp             x0,  x1,  [sp, #-16]!
 
+#if CONFIG_SME2
+        check_za
+#endif
         mvn             x3,  x3
         cmp             x2,  x3
         b.ne            2f
 
+#if CONFIG_SME2
+        ldr             x3, [x29, #CALL_ZA_ERROR]
+        cbnz            x3, 3f
+#endif
         movrel          x9, register_init
         movi            v3.8h,  #0
 
@@ -193,6 +339,11 @@ function checked_call, export=1
 
         movrel          x0, error_message_register
         b               1f
+#if CONFIG_SME2
+3:
+        movrel          x0, error_message_za
+        b               1f
+#endif
 2:
         movrel          x0, error_message_stack
 1:
@@ -203,6 +354,7 @@ function checked_call, export=1
 #endif
 0:
         ldp             x0,  x1,  [sp], #16
+        sub             sp, x29, #CALL_STATE_SIZE + SAVED_REGS_SIZE
         ldp             d14, d15, [sp], #16
         ldp             d12, d13, [sp], #16
         ldp             d10, d11, [sp], #16
@@ -212,6 +364,8 @@ function checked_call, export=1
         ldp             x23, x24, [sp], #16
         ldp             x21, x22, [sp], #16
         ldp             x19, x20, [sp], #16
+        add             sp, sp, #CALL_STATE_SIZE
         ldp             x29, x30, [sp], #16
+        AARCH64_VALIDATE_LINK_REGISTER
         ret
 endfunc

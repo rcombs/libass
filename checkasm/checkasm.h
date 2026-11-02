@@ -261,13 +261,28 @@ void checkasm_checked_call_vfp(void *func, int dummy, ...);
     (checkasm_set_signal_handler_state(1),\
      checked_call(func_new, 0, __VA_ARGS__, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0));\
     checkasm_set_signal_handler_state(0)
-#elif ARCH_AARCH64 && !defined(__APPLE__)
+#elif ARCH_AARCH64
 void checkasm_stack_clobber(uint64_t clobber, ...);
+#ifdef __APPLE__
+// Darwin passes variadic arguments in eight-byte stack slots. Using a typed
+// prototype here would pack adjacent int arguments into four-byte slots. Widen
+// every integer/pointer argument so all eight bytes of each slot are defined.
+// Keep the 15 argument slots and stack-argument count expected by checked_call.
+#define declare_new(ret, ...)\
+    ret (*checked_call)(void *, ...) = (void *)checkasm_checked_call;
+#define CHECKASM_AARCH64_ARGS(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, ...)\
+    (uint64_t)(a), (uint64_t)(b), (uint64_t)(c), (uint64_t)(d),\
+    (uint64_t)(e), (uint64_t)(f), (uint64_t)(g), (uint64_t)(h),\
+    (uint64_t)(i), (uint64_t)(j), (uint64_t)(k), (uint64_t)(l),\
+    (uint64_t)(m), (uint64_t)(n), (uint64_t)(o), (uint64_t)(p)
+#else
 #define declare_new(ret, ...)\
     ret (*checked_call)(void *, int, int, int, int, int, int, int,\
                         __VA_ARGS__, int, int, int, int, int, int, int, int,\
                         int, int, int, int, int, int, int) =\
     (void *)checkasm_checked_call;
+#define CHECKASM_AARCH64_ARGS(...) 0, 0, 0, 0, 0, 0, 0, __VA_ARGS__
+#endif
 #define CLOB (UINT64_C(0xdeadbeefdeadbeef))
 #define call_new(...)\
     (checkasm_set_signal_handler_state(1),\
@@ -275,8 +290,8 @@ void checkasm_stack_clobber(uint64_t clobber, ...);
                             CLOB, CLOB, CLOB, CLOB, CLOB, CLOB,\
                             CLOB, CLOB, CLOB, CLOB, CLOB, CLOB,\
                             CLOB, CLOB, CLOB, CLOB, CLOB),\
-     checked_call(func_new, 0, 0, 0, 0, 0, 0, 0, __VA_ARGS__,\
-                  7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0));\
+     checked_call(func_new, CHECKASM_AARCH64_ARGS(__VA_ARGS__,\
+                  7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0)));\
     checkasm_set_signal_handler_state(0)
 #else
 #define declare_new(ret, ...)

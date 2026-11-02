@@ -76,6 +76,9 @@ static const struct {
     { "AVX2",               "avx2",      ASS_CPU_FLAG_X86_AVX2 },
 #elif ARCH_AARCH64
     { "NEON",               "neon",      ASS_CPU_FLAG_ARM_NEON },
+#if CONFIG_SME2
+    { "SME2",               "sme2",      ASS_CPU_FLAG_ARM_SME2 },
+#endif
 #endif
     { 0 }
 };
@@ -120,6 +123,11 @@ static struct {
     void (*simd_warmup)(void);
 #endif
 } state;
+
+#if CONFIG_SME2 && ARCH_AARCH64
+// Read by checked_call before executing any SME instructions.
+int checkasm_test_za;
+#endif
 
 /* float compare support code */
 typedef union {
@@ -649,6 +657,9 @@ int main(int argc, char *argv[]) {
 #endif
     }
 
+#if CONFIG_SME2 && ARCH_AARCH64
+    checkasm_test_za = !!(ass_get_cpu_flags(ASS_CPU_FLAG_ALL) & ASS_CPU_FLAG_ARM_SME2);
+#endif
     check_cpu_flag(NULL, 0);
 
     if (state.function_listing) {
