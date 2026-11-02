@@ -24,6 +24,15 @@
 #include "ass_bitmap_engine.h"
 #include "x86/cpuid.h"
 
+#if CONFIG_SME2
+#if defined(__APPLE__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#elif defined(__linux__)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
+#endif
 
 #define RASTERIZER_PROTOTYPES(tile_size, suffix) \
     FillSolidTileFunc     ass_fill_solid_tile     ## tile_size ## _ ## suffix; \
@@ -155,6 +164,17 @@ unsigned ass_get_cpu_flags(unsigned mask)
 
 #if ARCH_AARCH64
     flags = ASS_CPU_FLAG_ARM_NEON;
+#if CONFIG_SME2
+#if defined(__APPLE__)
+    int sme2 = 0;
+    size_t size = sizeof(sme2);
+    if (!sysctlbyname("hw.optional.arm.FEAT_SME2", &sme2, &size, NULL, 0) && sme2)
+        flags |= ASS_CPU_FLAG_ARM_SME2;
+#elif defined(__linux__) && defined(HWCAP2_SME2)
+    if (getauxval(AT_HWCAP2) & HWCAP2_SME2)
+        flags |= ASS_CPU_FLAG_ARM_SME2;
+#endif
+#endif
 #endif
 
     return flags & mask;

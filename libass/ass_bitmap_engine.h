@@ -95,6 +95,7 @@ enum {
     ASS_CPU_FLAG_X86_AVX2      = 0x0004,
 #elif ARCH_AARCH64
     ASS_CPU_FLAG_ARM_NEON      = 0x0001,
+    ASS_CPU_FLAG_ARM_SME2      = 0x0002,
 #endif
     ASS_CPU_FLAG_ALL           = 0x0FFF,
     ASS_FLAG_LARGE_TILES       = 0x1000,
