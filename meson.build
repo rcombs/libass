@@ -340,6 +340,25 @@ if not asm_option.disabled()
     endif
 endif
 
+enable_sme2 = false
+if enable_asm and generic_cpu_family == 'aarch64' and host_system in ['darwin', 'linux']
+    enable_sme2 = cc.compiles(
+        '''
+        #if !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+        #error SME2 blur requires little endian
+        #endif
+        __asm__(
+            ".arch armv8-a+sme2;"
+            ".text;"
+            "umopa za0.s, p0/m, p0/m, z16.h, z8.h;"
+        );
+        ''',
+        args: asm_args,
+        name: 'SME2 assembler support',
+    )
+endif
+conf.set('CONFIG_SME2', enable_sme2.to_int())
+
 conf.set('CONFIG_LARGE_TILES', get_option('large-tiles').to_int())
 
 conf.set('CONFIG_SOURCEVERSION', '"meson, commit: @VCS_TAG@"')
@@ -424,3 +443,4 @@ endif
 
 summary('Font providers', font_providers)
 summary('ASM optimizations', enable_asm, bool_yn: true)
+summary('SME2 blur', enable_sme2, bool_yn: true)

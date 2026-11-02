@@ -361,6 +361,33 @@ AS_IF([test x"$enable_asm" = xyes && test x"$can_asm" != xtrue], [
     AC_MSG_ERROR([Assembly was requested, but cannot be built; see prior messages.])
 ])
 
+# Probe the assembler without enabling SME2 for baseline C code.
+can_sme2=false
+AS_IF([test "x$can_asm" = xtrue && test "x$cpu_family" = xaarch64], [
+    AS_CASE([$host_os], [darwin*|linux*], [
+        AC_MSG_CHECKING([for SME2 assembler support])
+        cat > conftest.S <<'END'
+#if !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error SME2 blur requires little endian
+#endif
+.arch armv8-a+sme2
+.text
+    umopa za0.s, p0/m, p0/m, z16.h, z8.h
+END
+        AS_IF([$CCAS $CPPFLAGS $CCASFLAGS -c conftest.S -o conftest.o >&AS_MESSAGE_LOG_FD 2>&1], [
+            can_sme2=true
+        ])
+        AC_MSG_RESULT([$can_sme2])
+        rm -f conftest.S conftest.o
+    ])
+])
+AM_CONDITIONAL([SME2], [test "x$can_sme2" = xtrue])
+AS_IF([test "x$can_sme2" = xtrue], [
+    AC_DEFINE([CONFIG_SME2], [1], [SME2 Gaussian blur enabled])
+], [
+    AC_DEFINE([CONFIG_SME2], [0], [SME2 Gaussian blur enabled])
+])
+
 # Relay config results to output files
 
 ## Tell Makefiles which assembler and flags to use
