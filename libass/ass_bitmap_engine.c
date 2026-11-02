@@ -211,6 +211,14 @@ BitmapEngine ass_bitmap_engine_init(unsigned mask)
     if (flags & ASS_CPU_FLAG_ARM_NEON) {
         ALL_PROTOTYPES(16, neon)
         ALL_FUNCTIONS(4, 16, neon)
+#if CONFIG_SME2
+        if (flags & ASS_CPU_FLAG_ARM_SME2) {
+            ParamFilterFunc PARAM_BLUR_SET(horz16_sme2);
+            ParamFilterFunc PARAM_BLUR_SET(vert16_sme2);
+            PARAM_BLUR_FUNCTION(horz, 16, sme2)
+            PARAM_BLUR_FUNCTION(vert, 16, sme2)
+        }
+#endif
         return engine;
     }
 #endif

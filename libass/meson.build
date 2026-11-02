@@ -88,6 +88,9 @@ if enable_asm
         asm_sources = src_x86
     elif generic_cpu_family == 'aarch64'
         asm_sources = src_aarch64
+        if enable_sme2
+            asm_sources += files('aarch64/blur_sme2.S')
+        endif
     endif
 
     if asm_is_nasm

@@ -47,6 +47,9 @@ libass_libass_internal_la_SOURCES += \
     libass/aarch64/be_blur.S \
     libass/aarch64/blur.S \
     libass/aarch64/asm.S
+if SME2
+libass_libass_internal_la_SOURCES += libass/aarch64/blur_sme2.S
+endif
 endif
 endif
 
