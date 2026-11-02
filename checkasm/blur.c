@@ -134,21 +134,46 @@ static void check_fixed_filter(FilterFunc func, const char *name, int align)
 
 static void check_param_filter(ParamFilterFunc func, const char *name, int n, int align)
 {
-    enum { PADDING = FFMAX(32 * HEIGHT, 16 * STRIDE) };
+    enum {
+        BENCH_WIDTH = 128, BENCH_HEIGHT = 64,
+        MAX_RADIUS = 8,
+        MAX_WIDTH = BENCH_WIDTH + 2 * MAX_RADIUS, MAX_HEIGHT = BENCH_HEIGHT + 1,
+        DST_SIZE = (MAX_WIDTH + 2 * MAX_RADIUS) * (MAX_HEIGHT + 2 * MAX_RADIUS) + STRIDE,
+        // Dense, positive coefficients with a total below 0x8000 at every radius.
+        COEFF_BASE = 4000, COEFF_STEP = 500,
+        RANDOM = 0, ZERO, MAX_COVERAGE, ZERO_CENTER, DENSE, NEGATIVE, EXCESSIVE, PROFILES,
+    };
+    // Dispatch boundaries and partially filled stripes and sixteen-row tiles.
+    static const int dimensions[][2] = {
+        {64, 31}, {63, 32}, {64, 32}, {65, 33}, {127, 63}, {128, 64}, {129, 65},
+    };
 
-    ALIGN(int16_t src[STRIDE * HEIGHT], 32);
-    ALIGN(int16_t dst_ref[STRIDE * HEIGHT + PADDING], 32);
-    ALIGN(int16_t dst_new[STRIDE * HEIGHT + PADDING], 32);
-    int16_t param[8];
+    ALIGN(int16_t src[MAX_WIDTH * MAX_HEIGHT], 32);
+    ALIGN(int16_t dst_ref[DST_SIZE], 32);
+    ALIGN(int16_t dst_new[DST_SIZE], 32);
+    int16_t param[MAX_RADIUS];
     declare_func(void,
                  int16_t *dst, const int16_t *src,
                  size_t src_width, size_t src_height,
                  const int16_t *param);
 
     if (check_func(func, name, n, align)) {
-        for (int w = MIN_WIDTH; w <= STRIDE; w++) {
+        // Keep small-width coverage and exercise tiled kernels above their
+        // dispatch threshold, including partial stripes and sixteen-row tiles.
+        int tests = STRIDE + PROFILES * (sizeof(dimensions) / sizeof(dimensions[0]));
+        for (int test = 0; test < tests; test++) {
+            int w, h, profile = RANDOM;
+            if (test < STRIDE) {
+                w = test + MIN_WIDTH;
+                h = HEIGHT - (rnd() & 3);
+            } else {
+                int large = test - STRIDE;
+                w = dimensions[large / PROFILES][0];
+                h = dimensions[large / PROFILES][1];
+                profile = large % PROFILES;
+            }
             for (int i = 0; i < sizeof(src) / 2; i++)
-                src[i] = rnd() % 0x4001;
+                src[i] = profile == MAX_COVERAGE ? 0x4000 : rnd() % 0x4001;
 
             for (int i = 0; i < sizeof(dst_ref) / 2; i++)
                 dst_ref[i] = dst_new[i] = rnd();
@@ -158,8 +183,23 @@ static void check_param_filter(ParamFilterFunc func, const char *name, int n, in
                 param[i] = rnd() % FFMIN(left + 1, 0x8000);
                 left -= param[i];
             }
+            if (profile != RANDOM) {
+                memset(param, 0, sizeof(param));
+                if (profile == MAX_COVERAGE)
+                    param[0] = 16384;
+                else if (profile == ZERO_CENTER) {
+                    param[0] = 32767;
+                    param[1] = 1;
+                } else if (profile == DENSE) {
+                    for (int i = 0; i < n; i++)
+                        param[i] = COEFF_BASE - i * COEFF_STEP;
+                } else if (profile == NEGATIVE) {
+                    param[0] = -1;
+                } else if (profile == EXCESSIVE) {
+                    param[0] = param[1] = 32767;
+                }
+            }
 
-            int h = HEIGHT - (rnd() & 3);
             call_ref(dst_ref, src, w, h, param);
             call_new(dst_new, src, w, h, param);
 
@@ -169,7 +209,9 @@ static void check_param_filter(ParamFilterFunc func, const char *name, int n, in
             }
         }
 
-        bench_new(dst_new, src, STRIDE, HEIGHT, param);
+        for (int i = 0; i < n; i++)
+            param[i] = COEFF_BASE - i * COEFF_STEP;
+        bench_new(dst_new, src, BENCH_WIDTH, BENCH_HEIGHT, param);
     }
 
     report(name, n, align);
